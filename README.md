@@ -876,9 +876,3 @@ React Dashboard
 **A privacy-first approach to collaborative healthcare AI.**
 
 ---
-
-## 📜 License
-
-This project is intended for educational and research purposes.
-
-License information will be finalized by the project team.
