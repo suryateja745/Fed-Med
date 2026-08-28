@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package fedmed;
+
+service FedMedService {
+    rpc HealthCheck (HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {
+    string hospital_id = 1;
+}
+
+message HealthResponse {
+    string status = 1;
+    string message = 2;
+}
