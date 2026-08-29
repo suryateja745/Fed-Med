@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x66\x65\x64med.proto\x12\x06\x66\x65\x64med\"$\n\rHealthRequest\x12\x13\n\x0bhospital_id\x18\x01 \x01(\t\"1\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t2M\n\rFedMedService\x12<\n\x0bHealthCheck\x12\x15.fedmed.HealthRequest\x1a\x16.fedmed.HealthResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0c\x66\x65\x64med.proto\x12\x06\x66\x65\x64med\"$\n\rHealthRequest\x12\x13\n\x0bhospital_id\x18\x01 \x01(\t\"1\n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"E\n\x17RegisterHospitalRequest\x12\x13\n\x0bhospital_id\x18\x01 \x01(\t\x12\x15\n\rhospital_name\x18\x02 \x01(\t\";\n\x18RegisterHospitalResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t2\xa4\x01\n\rFedMedService\x12<\n\x0bHealthCheck\x12\x15.fedmed.HealthRequest\x1a\x16.fedmed.HealthResponse\x12U\n\x10RegisterHospital\x12\x1f.fedmed.RegisterHospitalRequest\x1a .fedmed.RegisterHospitalResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,6 +35,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_HEALTHREQUEST']._serialized_end=60
   _globals['_HEALTHRESPONSE']._serialized_start=62
   _globals['_HEALTHRESPONSE']._serialized_end=111
-  _globals['_FEDMEDSERVICE']._serialized_start=113
-  _globals['_FEDMEDSERVICE']._serialized_end=190
+  _globals['_REGISTERHOSPITALREQUEST']._serialized_start=113
+  _globals['_REGISTERHOSPITALREQUEST']._serialized_end=182
+  _globals['_REGISTERHOSPITALRESPONSE']._serialized_start=184
+  _globals['_REGISTERHOSPITALRESPONSE']._serialized_end=243
+  _globals['_FEDMEDSERVICE']._serialized_start=246
+  _globals['_FEDMEDSERVICE']._serialized_end=410
 # @@protoc_insertion_point(module_scope)
