@@ -14,6 +14,12 @@ class FedMedService(fedmed_pb2_grpc.FedMedServiceServicer):
             message=f"Hospital {request.hospital_id} connected successfully",
         )
 
+    def RegisterHospital(self, request, context):
+        return fedmed_pb2.RegisterHospitalResponse(
+            status="registered",
+            message=f"Hospital {request.hospital_name} registered successfully",
+        )
+
 
 def serve():
     server = grpc.server(
