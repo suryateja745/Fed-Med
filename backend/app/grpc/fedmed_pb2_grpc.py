@@ -2,9 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 import warnings
-
-from app.grpc import fedmed_pb2 as fedmed__pb2
-
+from app.grpc from app.grpc import fedmed_pb2 as fedmed__pb2
 GRPC_GENERATED_VERSION = '1.83.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
