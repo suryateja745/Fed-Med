@@ -1,0 +1,21 @@
+env/
+venv/
+map.md
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Model Checkpoints & Logs
+checkpoints/
+logs/
+*.pth
+*.pt
+
+# OS & IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

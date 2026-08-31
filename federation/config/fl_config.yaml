@@ -1,0 +1,67 @@
+# FedMed - Federated Learning Configuration
+
+# Server & Federated Round Configuration
+federation:
+  num_rounds: 10
+  min_fit_clients: 2
+  min_available_clients: 2
+  min_evaluate_clients: 2
+  fraction_fit: 1.0
+  fraction_evaluate: 1.0
+  server_address: "127.0.0.1:8080"
+
+# Aggregation Strategy Settings
+strategy:
+  name: "FedMedStrategy"
+  base: "FedAvg"
+  weighted_by_samples: true
+  min_completion_rate_fit: 1.0
+  evaluate_metrics_aggregation_fn: true
+
+# 3D U-Net Model Architecture
+model:
+  name: "UNet3D"
+  in_channels: 4          # Multi-modal MRI: T1, T1ce, T2, FLAIR (or 1 for single channel)
+  out_channels: 3         # Tumor Sub-regions: WT (Whole Tumor), TC (Tumor Core), ET (Enhancing Tumor)
+  channels: [16, 32, 64, 128, 256]
+  strides: [2, 2, 2, 2]
+  num_res_units: 2
+  norm: "batch"
+  dropout: 0.2
+
+# Local Client Training Hyperparameters
+training:
+  local_epochs: 3
+  batch_size: 2
+  learning_rate: 0.0002
+  weight_decay: 0.00001
+  optimizer: "AdamW"
+  loss_function: "DiceCELoss"
+  gradient_clip_val: 1.0
+
+# Dataset Preprocessing & Ingestion
+dataset:
+  spatial_size: [128, 128, 128]
+  num_samples_per_image: 2
+  pos_neg_ratio: 1.0
+  cache_rate: 1.0
+  num_workers: 0
+
+# Security & Privacy Parameters
+security:
+  encryption_enabled: false
+  scheme: "CKKS"
+  poly_modulus_degree: 8192
+  coeff_mod_bit_sizes: [60, 40, 40, 60]
+  differential_privacy:
+    enabled: false
+    epsilon: 1.0
+    delta: 1e-5
+    clip_norm: 1.0
+
+# Storage & Checkpointing
+storage:
+  checkpoint_dir: "./checkpoints"
+  logs_dir: "./logs"
+  save_every_round: 1
+  export_best_model: true
