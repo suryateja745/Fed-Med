@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package fedmed;
+
+service FedMedService {
+    rpc HealthCheck (HealthRequest) returns (HealthResponse);
+    rpc RegisterHospital (RegisterHospitalRequest) returns (RegisterHospitalResponse);
+}
+
+message HealthRequest {
+    string hospital_id = 1;
+}
+
+message HealthResponse {
+    string status = 1;
+    string message = 2;
+}
+
+message RegisterHospitalRequest {
+    string hospital_id = 1;
+    string hospital_name = 2;
+    string location = 3;
+}
+
+message RegisterHospitalResponse {
+    bool success = 1;
+    string message = 2;
+}
