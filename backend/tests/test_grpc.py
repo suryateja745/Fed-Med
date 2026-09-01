@@ -14,7 +14,7 @@ def test_health_check():
 
     response = stub.HealthCheck(
         fedmed_pb2.HealthRequest(
-            hospital_id="test-hospital-1"
+            hospital_id="test-hospital-2"
         )
     )
 
@@ -30,7 +30,7 @@ def test_register_hospital():
 
     response = stub.RegisterHospital(
         fedmed_pb2.RegisterHospitalRequest(
-            hospital_id="test-hospital-1",
+            hospital_id="test-hospital-2",
             hospital_name="Test Hospital",
             location="Mumbai"
         )
