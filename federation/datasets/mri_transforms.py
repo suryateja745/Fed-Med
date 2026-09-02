@@ -26,10 +26,33 @@ except ImportError:
     MapTransform = object
 
 
-# ==============================================================================
-# Unified Loader Transform
-# ==============================================================================
+# Helper File Loader
+def load_file_to_array(path_or_array: Union[str, Path, np.ndarray, torch.Tensor]) -> np.ndarray:
+    """Load file path (.npy, .npz, .nii, .nii.gz) or return numpy array."""
+    if isinstance(path_or_array, (str, Path)):
+        p = Path(path_or_array)
+        if p.suffix == ".npy":
+            return np.load(p).astype(np.float32)
+        elif p.suffix == ".npz":
+            data = np.load(p)
+            return data[list(data.keys())[0]].astype(np.float32)
+        elif p.suffix in (".nii", ".gz"):
+            try:
+                import nibabel as nib
+                return nib.load(str(p)).get_fdata(dtype=np.float32)
+            except ImportError:
+                raise ImportError(f"nibabel is required to load NIfTI file: {p}")
+        else:
+            raise ValueError(f"Unsupported file format: {p.suffix}")
+    elif isinstance(path_or_array, torch.Tensor):
+        return path_or_array.detach().cpu().numpy().astype(np.float32)
+    elif isinstance(path_or_array, np.ndarray):
+        return path_or_array.astype(np.float32)
+    else:
+        raise TypeError(f"Expected file path, ndarray, or Tensor, got {type(path_or_array).__name__}")
 
+
+# Unified Loader Transform
 class LoadImageOrArrayd(MapTransform if HAS_MONAI else object):
     """
     Unified loader transform for FedMed:
@@ -44,29 +67,8 @@ class LoadImageOrArrayd(MapTransform if HAS_MONAI else object):
     def __call__(self, data: dict) -> dict:
         d = dict(data)
         for key in self.keys:
-            if key not in d:
-                continue
-            val = d[key]
-            if isinstance(val, (str, Path)):
-                p = Path(val)
-                if p.suffix == ".npy":
-                    arr = np.load(p).astype(np.float32)
-                elif p.suffix == ".npz":
-                    loaded = np.load(p)
-                    arr = loaded[list(loaded.keys())[0]].astype(np.float32)
-                elif p.suffix in (".nii", ".gz"):
-                    try:
-                        import nibabel as nib
-                        arr = nib.load(str(p)).get_fdata(dtype=np.float32)
-                    except ImportError:
-                        raise ImportError(f"nibabel is required to load NIfTI file: {p}")
-                else:
-                    raise ValueError(f"Unsupported file format: {p.suffix}")
-                d[key] = arr
-            elif isinstance(val, np.ndarray):
-                d[key] = val.astype(np.float32)
-            elif isinstance(val, torch.Tensor):
-                d[key] = val.float()
+            if key in d:
+                d[key] = load_file_to_array(d[key])
         return d
 
 
@@ -119,6 +121,9 @@ class ConvertToMultiChannelBasedOnBratsClassesd:
             if key not in d:
                 continue
             seg = d[key]
+            if isinstance(seg, (str, Path)):
+                seg = load_file_to_array(seg)
+
             if isinstance(seg, torch.Tensor):
                 tc = torch.logical_or(seg == 1, seg == 4)
                 wt = torch.logical_or(tc, seg == 2)
@@ -132,10 +137,7 @@ class ConvertToMultiChannelBasedOnBratsClassesd:
         return d
 
 
-# ==============================================================================
 # Pure-PyTorch / NumPy Fallback Transforms
-# ==============================================================================
-
 class SimpleDictTransform:
     """Fallback transform composing simple numpy/torch tensor operations."""
 
@@ -143,14 +145,22 @@ class SimpleDictTransform:
         self,
         roi_size: Tuple[int, int, int] = (64, 64, 64),
         is_train: bool = True,
+        convert_brats: bool = False,
     ) -> None:
         self.roi_size = roi_size
         self.is_train = is_train
+        self.convert_brats = convert_brats
+        self.brats_converter = ConvertToMultiChannelBasedOnBratsClassesd(keys=["label"])
 
     def __call__(self, sample: dict) -> dict:
         data = dict(sample)
         image = data["image"]
         label = data["label"]
+
+        if isinstance(image, (str, Path)):
+            image = load_file_to_array(image)
+        if isinstance(label, (str, Path)):
+            label = load_file_to_array(label)
 
         if not isinstance(image, torch.Tensor):
             image = torch.tensor(image, dtype=torch.float32)
@@ -162,6 +172,13 @@ class SimpleDictTransform:
             image = image.unsqueeze(0)
         if label.ndim == 3:
             label = label.unsqueeze(0)
+
+        data["image"] = image
+        data["label"] = label
+
+        if self.convert_brats:
+            data = self.brats_converter(data)
+            label = data["label"]
 
         # Intensity Normalization (zero mean, unit variance per channel)
         for c in range(image.shape[0]):
@@ -213,10 +230,7 @@ class SimpleDictTransform:
         return tensor
 
 
-# ==============================================================================
 # MONAI Transform Pipelines
-# ==============================================================================
-
 def get_train_transforms(
     roi_size: Tuple[int, int, int] = (128, 128, 128),
     convert_brats: bool = False,
@@ -225,7 +239,7 @@ def get_train_transforms(
     Build MONAI preprocessing and augmentation pipeline for training.
     """
     if not HAS_MONAI:
-        return SimpleDictTransform(roi_size=roi_size, is_train=True)
+        return SimpleDictTransform(roi_size=roi_size, is_train=True, convert_brats=convert_brats)
 
     transforms_list = [
         LoadImageOrArrayd(keys=["image", "label"]),
@@ -256,7 +270,7 @@ def get_val_transforms(
     Build MONAI preprocessing pipeline for validation/evaluation.
     """
     if not HAS_MONAI:
-        return SimpleDictTransform(roi_size=roi_size or (64, 64, 64), is_train=False)
+        return SimpleDictTransform(roi_size=roi_size or (64, 64, 64), is_train=False, convert_brats=convert_brats)
 
     transforms_list = [
         LoadImageOrArrayd(keys=["image", "label"]),

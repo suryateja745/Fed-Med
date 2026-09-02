@@ -21,10 +21,7 @@ from federation.datasets.mri_transforms import (
 )
 
 
-# ==============================================================================
 # Local MRI Dataset Class
-# ==============================================================================
-
 class FedMedMRIDataset(Dataset):
     """
     Volumetric 3D MRI Dataset for local hospital nodes.
@@ -97,10 +94,7 @@ def _extract_base_identifier(path: Path) -> str:
     return name
 
 
-# ==============================================================================
 # Local Directory Scanner
-# ==============================================================================
-
 def scan_local_dataset(data_dir: Union[str, Path]) -> List[Dict[str, str]]:
     """
     Recursively scan a local hospital directory for paired MRI scans and segmentation masks.
@@ -159,11 +153,7 @@ def scan_local_dataset(data_dir: Union[str, Path]) -> List[Dict[str, str]]:
     return data_list
 
 
-
-# ==============================================================================
 # Federated Dataset Partitioner (IID & Non-IID)
-# ==============================================================================
-
 def partition_dataset(
     data_list: List[Dict[str, Any]],
     num_clients: int = 3,
@@ -279,10 +269,7 @@ def generate_synthetic_mri_dataset(
     return data_list
 
 
-# ==============================================================================
 # Hospital DataLoader Factory
-# ==============================================================================
-
 def create_hospital_dataloaders(
     hospital_id: str,
     data_dir: Optional[Union[str, Path]] = None,
