@@ -2,7 +2,8 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 import warnings
-from app.grpc from app.grpc import fedmed_pb2 as fedmed__pb2
+from app.grpc import fedmed_pb2 as fedmed__pb2
+
 GRPC_GENERATED_VERSION = '1.83.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
@@ -42,6 +43,11 @@ class FedMedServiceStub:
                 request_serializer=fedmed__pb2.RegisterHospitalRequest.SerializeToString,
                 response_deserializer=fedmed__pb2.RegisterHospitalResponse.FromString,
                 _registered_method=True)
+        self.GetHospitalStatus = channel.unary_unary(
+                '/fedmed.FedMedService/GetHospitalStatus',
+                request_serializer=fedmed__pb2.GetHospitalStatusRequest.SerializeToString,
+                response_deserializer=fedmed__pb2.GetHospitalStatusResponse.FromString,
+                _registered_method=True)
 
 
 class FedMedServiceServicer:
@@ -59,6 +65,12 @@ class FedMedServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetHospitalStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_FedMedServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -71,6 +83,11 @@ def add_FedMedServiceServicer_to_server(servicer, server):
                     servicer.RegisterHospital,
                     request_deserializer=fedmed__pb2.RegisterHospitalRequest.FromString,
                     response_serializer=fedmed__pb2.RegisterHospitalResponse.SerializeToString,
+            ),
+            'GetHospitalStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetHospitalStatus,
+                    request_deserializer=fedmed__pb2.GetHospitalStatusRequest.FromString,
+                    response_serializer=fedmed__pb2.GetHospitalStatusResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -127,6 +144,33 @@ class FedMedService:
             '/fedmed.FedMedService/RegisterHospital',
             fedmed__pb2.RegisterHospitalRequest.SerializeToString,
             fedmed__pb2.RegisterHospitalResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetHospitalStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/fedmed.FedMedService/GetHospitalStatus',
+            fedmed__pb2.GetHospitalStatusRequest.SerializeToString,
+            fedmed__pb2.GetHospitalStatusResponse.FromString,
             options,
             channel_credentials,
             insecure,
