@@ -5,6 +5,7 @@ package fedmed;
 service FedMedService {
     rpc HealthCheck (HealthRequest) returns (HealthResponse);
     rpc RegisterHospital (RegisterHospitalRequest) returns (RegisterHospitalResponse);
+    rpc GetHospitalStatus (GetHospitalStatusRequest) returns (GetHospitalStatusResponse);
 }
 
 message HealthRequest {
@@ -25,4 +26,17 @@ message RegisterHospitalRequest {
 message RegisterHospitalResponse {
     bool success = 1;
     string message = 2;
+}
+
+message GetHospitalStatusRequest {
+    string hospital_id = 1;
+}
+
+message GetHospitalStatusResponse {
+    bool success = 1;
+    string hospital_id = 2;
+    string hospital_name = 3;
+    string location = 4;
+    string status = 5;
+    string message = 6;
 }

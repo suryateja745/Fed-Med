@@ -44,6 +44,27 @@ def register_hospital(
     channel.close()
 
 
+def get_hospital_status(hospital_id: str):
+    channel = grpc.insecure_channel("localhost:50051")
+
+    stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
+
+    request = fedmed_pb2.GetHospitalStatusRequest(
+        hospital_id=hospital_id
+    )
+
+    response = stub.GetHospitalStatus(request)
+
+    print("Status check success:", response.success)
+    print("Hospital ID:", response.hospital_id)
+    print("Hospital Name:", response.hospital_name)
+    print("Location:", response.location)
+    print("Hospital Status:", response.status)
+    print("Message:", response.message)
+
+    channel.close()
+
+
 if __name__ == "__main__":
     check_server("hospital-1")
 
@@ -52,3 +73,5 @@ if __name__ == "__main__":
         "Hospital One",
         "Hyderabad",
     )
+
+    get_hospital_status("hospital-1")

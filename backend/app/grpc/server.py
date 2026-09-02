@@ -44,11 +44,41 @@ class FedMedService(fedmed_pb2_grpc.FedMedServiceServicer):
         self.hospitals[request.hospital_id] = {
             "hospital_name": request.hospital_name,
             "location": request.location,
+            "status": "online",
         }
 
         return fedmed_pb2.RegisterHospitalResponse(
             success=True,
             message=f"Hospital {request.hospital_id} registered successfully",
+        )
+
+    def GetHospitalStatus(self, request, context):
+        hospital_id = request.hospital_id.strip()
+
+        if not hospital_id:
+            return fedmed_pb2.GetHospitalStatusResponse(
+                success=False,
+                status="unknown",
+                message="Hospital ID is required",
+            )
+
+        hospital = self.hospitals.get(hospital_id)
+
+        if hospital is None:
+            return fedmed_pb2.GetHospitalStatusResponse(
+                success=False,
+                hospital_id=hospital_id,
+                status="offline",
+                message=f"Hospital {hospital_id} is not registered",
+            )
+
+        return fedmed_pb2.GetHospitalStatusResponse(
+            success=True,
+            hospital_id=hospital_id,
+            hospital_name=hospital["hospital_name"],
+            location=hospital["location"],
+            status=hospital["status"],
+            message=f"Hospital {hospital_id} is online",
         )
 
 
