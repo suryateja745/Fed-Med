@@ -4,21 +4,36 @@ from app.grpc import fedmed_pb2
 from app.grpc import fedmed_pb2_grpc
 
 
-def check_server(hospital_id: str):
-    channel = grpc.insecure_channel("localhost:50051")
+SERVER_ADDRESS = "localhost:50051"
 
+
+def create_channel():
+    return grpc.insecure_channel(SERVER_ADDRESS)
+
+
+def check_server(hospital_id: str):
+    channel = create_channel()
     stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
 
-    request = fedmed_pb2.HealthRequest(
-        hospital_id=hospital_id
-    )
+    try:
+        response = stub.HealthCheck(
+            fedmed_pb2.HealthRequest(
+                hospital_id=hospital_id
+            )
+        )
 
-    response = stub.HealthCheck(request)
+        print("Status:", response.status)
+        print("Message:", response.message)
 
-    print("Status:", response.status)
-    print("Message:", response.message)
+        return response
 
-    channel.close()
+    except grpc.RpcError as error:
+        print("HealthCheck failed")
+        print("Code:", error.code())
+        print("Details:", error.details())
+
+    finally:
+        channel.close()
 
 
 def register_hospital(
@@ -26,43 +41,59 @@ def register_hospital(
     hospital_name: str,
     location: str,
 ):
-    channel = grpc.insecure_channel("localhost:50051")
-
+    channel = create_channel()
     stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
 
-    request = fedmed_pb2.RegisterHospitalRequest(
-        hospital_id=hospital_id,
-        hospital_name=hospital_name,
-        location=location,
-    )
+    try:
+        response = stub.RegisterHospital(
+            fedmed_pb2.RegisterHospitalRequest(
+                hospital_id=hospital_id,
+                hospital_name=hospital_name,
+                location=location,
+            )
+        )
 
-    response = stub.RegisterHospital(request)
+        print("Registration success:", response.success)
+        print("Registration message:", response.message)
 
-    print("Registration success:", response.success)
-    print("Registration message:", response.message)
+        return response
 
-    channel.close()
+    except grpc.RpcError as error:
+        print("Hospital registration failed")
+        print("Code:", error.code())
+        print("Details:", error.details())
+
+    finally:
+        channel.close()
 
 
 def get_hospital_status(hospital_id: str):
-    channel = grpc.insecure_channel("localhost:50051")
-
+    channel = create_channel()
     stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
 
-    request = fedmed_pb2.GetHospitalStatusRequest(
-        hospital_id=hospital_id
-    )
+    try:
+        response = stub.GetHospitalStatus(
+            fedmed_pb2.GetHospitalStatusRequest(
+                hospital_id=hospital_id
+            )
+        )
 
-    response = stub.GetHospitalStatus(request)
+        print("Status check success:", response.success)
+        print("Hospital ID:", response.hospital_id)
+        print("Hospital Name:", response.hospital_name)
+        print("Location:", response.location)
+        print("Hospital Status:", response.status)
+        print("Message:", response.message)
 
-    print("Status check success:", response.success)
-    print("Hospital ID:", response.hospital_id)
-    print("Hospital Name:", response.hospital_name)
-    print("Location:", response.location)
-    print("Hospital Status:", response.status)
-    print("Message:", response.message)
+        return response
 
-    channel.close()
+    except grpc.RpcError as error:
+        print("Hospital status check failed")
+        print("Code:", error.code())
+        print("Details:", error.details())
+
+    finally:
+        channel.close()
 
 
 if __name__ == "__main__":
