@@ -1,6 +1,7 @@
 import streamlit as st
 
 from app.utils.grpc_client import (
+    get_hospital_status,
     health_check,
     register_hospital,
 )
@@ -8,16 +9,14 @@ from app.utils.grpc_client import (
 
 st.set_page_config(
     page_title="FedMed",
-    page_icon="🏥",
+    page_icon="🧠",
     layout="wide",
 )
 
 
 def main():
-    st.sidebar.title("🏥 FedMed")
-    st.sidebar.caption(
-        "Cross-Silo Federated Learning Engine"
-    )
+    st.sidebar.title("🧠 FedMed")
+    st.sidebar.caption("Cross-Silo Federated Learning Engine")
 
     page = st.sidebar.radio(
         "Navigation",
@@ -43,32 +42,31 @@ def main():
 
 
 def show_dashboard():
-    st.title("🏥 FedMed Dashboard")
+    st.title("🧠 FedMed Dashboard")
 
-    st.subheader(
-        "Cross-Silo Federated Learning Engine"
-    )
+    st.subheader("Cross-Silo Federated Learning Engine")
 
     st.write(
-        "Privacy-preserving collaborative machine "
-        "learning for healthcare institutions."
+        "Privacy-preserving collaborative machine learning "
+        "for healthcare institutions."
     )
 
     st.divider()
 
-    # Backend health check
-    st.subheader("Backend Status")
+    st.subheader("Backend Connection")
 
-    health = health_check()
+    if st.button("Check Backend Health"):
+        result = health_check()
 
-    if health["success"]:
-        st.success(
-            f"Backend Connected: {health['message']}"
-        )
-    else:
-        st.error(
-            f"Backend Error: {health['message']}"
-        )
+        if result["success"]:
+            st.success(
+                f"Backend connected: {result['message']}"
+            )
+        else:
+            st.error(
+                f"Backend connection failed: "
+                f"{result['status']} - {result['message']}"
+            )
 
     st.divider()
 
@@ -77,7 +75,7 @@ def show_dashboard():
     with col1:
         st.metric(
             "Registered Hospitals",
-            "0",
+            "Backend Managed",
         )
 
     with col2:
@@ -95,30 +93,62 @@ def show_dashboard():
     st.divider()
 
     st.info(
-        "FedMed enables hospitals to collaboratively "
-        "train machine learning models without sharing "
-        "raw patient data."
+        "FedMed enables hospitals to collaboratively train "
+        "machine learning models without sharing raw patient data."
     )
 
-    st.subheader("System Overview")
+    st.subheader("Hospital Status")
 
-    col1, col2 = st.columns(2)
+    hospital_id = st.text_input(
+        "Enter Hospital ID",
+        placeholder="hospital-001",
+        key="dashboard_hospital_id",
+    )
 
-    with col1:
-        st.markdown("### 🏥 Hospitals")
+    if st.button("Check Hospital Status"):
+        if not hospital_id.strip():
+            st.warning("Please enter a Hospital ID.")
+            return
 
-        st.write(
-            "Hospitals can register with the FedMed "
-            "federated learning network."
+        result = get_hospital_status(
+            hospital_id.strip()
         )
 
-    with col2:
-        st.markdown("### 🔐 Privacy")
+        if result["success"]:
+            st.success("Hospital found")
 
-        st.write(
-            "Raw patient data remains inside each "
-            "hospital. Only model updates are shared."
-        )
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                st.write("**Hospital ID**")
+                st.write(result["hospital_id"])
+
+            with col2:
+                st.write("**Hospital Name**")
+                st.write(result["hospital_name"])
+
+            with col3:
+                st.write("**Location**")
+                st.write(result["location"])
+
+            st.success(
+                f"Status: {result['status']}"
+            )
+
+            st.info(result["message"])
+
+        else:
+            if result["status"] == "NOT_FOUND":
+                st.error(
+                    f"Hospital '{hospital_id}' is not registered."
+                )
+            else:
+                st.error(
+                    f"Status check failed: "
+                    f"{result['status']}"
+                )
+
+            st.caption(result["message"])
 
 
 def show_hospital_registration():
@@ -152,47 +182,75 @@ def show_hospital_registration():
             "Register Hospital"
         )
 
-        if submitted:
+    if submitted:
 
-            if (
-                not hospital_id.strip()
-                or not hospital_name.strip()
-                or not location.strip()
-            ):
+        hospital_id = hospital_id.strip()
+        hospital_name = hospital_name.strip()
+        location = location.strip()
+
+        if not hospital_id:
+            st.error("Hospital ID is required.")
+            return
+
+        if not hospital_name:
+            st.error("Hospital name is required.")
+            return
+
+        if not location:
+            st.error("Hospital location is required.")
+            return
+
+        with st.spinner("Registering hospital..."):
+
+            result = register_hospital(
+                hospital_id,
+                hospital_name,
+                location,
+            )
+
+        if result["success"]:
+
+            st.success(
+                result["message"]
+            )
+
+            st.info(
+                "The hospital is now registered "
+                "with the FedMed backend."
+            )
+
+        else:
+
+            status = result.get("status", "")
+
+            if status == "ALREADY_EXISTS":
+                st.warning(
+                    f"Hospital '{hospital_id}' "
+                    "is already registered."
+                )
+
+            elif status == "INVALID_ARGUMENT":
                 st.error(
-                    "Please fill in all fields."
+                    "Invalid hospital registration details."
+                )
+
+            elif status:
+                st.error(
+                    f"Registration failed: {status}"
                 )
 
             else:
+                st.error(
+                    f"Registration failed: "
+                    f"{result.get('message', 'Unknown error')}"
+                )
 
-                with st.spinner(
-                    "Registering hospital..."
-                ):
-                    result = register_hospital(
-                        hospital_id.strip(),
-                        hospital_name.strip(),
-                        location.strip(),
-                    )
-
-                if result["success"]:
-                    st.success(
-                        result["message"]
-                    )
-
-                else:
-                    st.error(
-                        result["message"]
-                    )
-
-                # Show backend response
-                with st.expander(
-                    "Backend Response"
-                ):
-                    st.write(
-                        result
-                    )
-
-
+            st.caption(
+                result.get(
+                    "message",
+                    "No additional details available."
+                )
+            )
 def show_federated_learning():
     st.title("🔄 Federated Learning")
 
@@ -201,19 +259,8 @@ def show_federated_learning():
         "implemented in the next development phase."
     )
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric(
-            "Connected Hospitals",
-            "0",
-        )
-
-    with col2:
-        st.metric(
-            "Current Round",
-            "0",
-        )
+    st.metric("Connected Hospitals", "0")
+    st.metric("Current Round", "0")
 
 
 def show_model_training():
