@@ -100,10 +100,7 @@ class Ensure4DChannelFirstd(MapTransform if HAS_MONAI else object):
         return d
 
 
-# ==============================================================================
 # BraTS Label Conversion Transform
-# ==============================================================================
-
 class ConvertToMultiChannelBasedOnBratsClassesd:
     """
     Convert BraTS segmentation labels to 3 multi-region binary channels:

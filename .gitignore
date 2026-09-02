@@ -1,6 +1,7 @@
 env/
 venv/
 map.md
+progress.md
 
 # Python Bytecode & Cache
 __pycache__/
@@ -18,4 +19,4 @@ logs/
 .DS_Store
 Thumbs.db
 .vscode/
-.idea/
+.idea/

@@ -212,10 +212,7 @@ def partition_dataset(
     return partitions
 
 
-# ==============================================================================
 # Synthetic MRI Generator for Testing & Zero-Data Bootstrap
-# ==============================================================================
-
 def generate_synthetic_mri_dataset(
     output_dir: Union[str, Path],
     num_samples: int = 6,
