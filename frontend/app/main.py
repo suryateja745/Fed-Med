@@ -1,6 +1,7 @@
 import streamlit as st
 
 from app.utils.grpc_client import (
+    get_all_hospitals,
     get_hospital_status,
     health_check,
     register_hospital,
@@ -43,8 +44,73 @@ def main():
 
 def show_dashboard():
     st.title("🧠 FedMed Dashboard")
+    st.subheader("Registered Hospitals")
 
-    st.subheader("Cross-Silo Federated Learning Engine")
+    if st.button("Refresh Hospital List"):
+        st.rerun()
+
+    with st.spinner("Loading hospitals..."):
+        result = get_all_hospitals()
+
+    if not result["success"]:
+        st.error(
+            f"Failed to load hospitals: "
+            f"{result.get('status', 'UNKNOWN')}"
+        )
+        st.caption(
+            result.get(
+                "message",
+                "Unable to retrieve hospitals from backend.",
+            )
+        )
+        return
+
+    hospitals = result.get("hospitals", [])
+
+    if not hospitals:
+        st.info(
+            "No hospitals are currently registered "
+            "with the FedMed network."
+        )
+        return
+
+    st.success(
+        f"{len(hospitals)} hospital(s) registered"
+    )
+
+    columns = st.columns(3)
+
+    for index, hospital in enumerate(hospitals):
+        with columns[index % 3]:
+            with st.container(border=True):
+                st.subheader(
+                    hospital["hospital_name"]
+                )
+
+                st.write(
+                    f"**Hospital ID:** "
+                    f"{hospital['hospital_id']}"
+                )
+
+                st.write(
+                    f"**Location:** "
+                    f"{hospital['location']}"
+                )
+
+                status = hospital["status"]
+
+                if status.lower() == "online":
+                    st.success(
+                        f"Status: {status}"
+                    )
+                elif status.lower() == "offline":
+                    st.error(
+                        f"Status: {status}"
+                    )
+                else:
+                    st.warning(
+                        f"Status: {status}"
+                    )
 
     st.write(
         "Privacy-preserving collaborative machine learning "
