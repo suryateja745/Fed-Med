@@ -3,7 +3,7 @@ import pytest
 
 from app.grpc import fedmed_pb2
 from app.grpc import fedmed_pb2_grpc
-
+from app.grpc.server import FedMedService
 
 def create_channel():
     return grpc.insecure_channel("localhost:50051")
@@ -174,3 +174,66 @@ def test_empty_hospital_status_id():
     assert error.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
     channel.close()
+def test_get_all_hospitals():
+    service = FedMedService()
+
+    class FakeContext:
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    context = FakeContext()
+
+    service.RegisterHospital(
+        fedmed_pb2.RegisterHospitalRequest(
+            hospital_id="hospital-001",
+            hospital_name="Hospital One",
+            location="Hyderabad",
+        ),
+        context,
+    )
+
+    service.RegisterHospital(
+        fedmed_pb2.RegisterHospitalRequest(
+            hospital_id="hospital-002",
+            hospital_name="Hospital Two",
+            location="Bengaluru",
+        ),
+        context,
+    )
+
+    response = service.GetAllHospitals(
+        fedmed_pb2.GetAllHospitalsRequest(),
+        context,
+    )
+
+    assert response.success is True
+    assert len(response.hospitals) == 2
+
+    hospital_ids = {
+        hospital.hospital_id
+        for hospital in response.hospitals
+    }
+
+    assert hospital_ids == {
+        "hospital-001",
+        "hospital-002",
+    }
+
+
+def test_get_all_hospitals_empty():
+    service = FedMedService()
+
+    class FakeContext:
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    context = FakeContext()
+
+    response = service.GetAllHospitals(
+        fedmed_pb2.GetAllHospitalsRequest(),
+        context,
+    )
+
+    assert response.success is True
+    assert len(response.hospitals) == 0
+    assert "0 hospital(s)" in response.message
