@@ -104,5 +104,43 @@ if __name__ == "__main__":
         "Hospital One",
         "Hyderabad",
     )
-
     get_hospital_status("hospital-1")
+
+
+def get_all_hospitals():
+    channel = grpc.insecure_channel("localhost:50051")
+    stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
+
+    try:
+        request = fedmed_pb2.GetAllHospitalsRequest()
+
+        response = stub.GetAllHospitals(
+            request,
+            timeout=5,
+        )
+
+        print("Get all hospitals success:", response.success)
+        print("Message:", response.message)
+        print("Total hospitals:", len(response.hospitals))
+
+        for hospital in response.hospitals:
+            print(
+                "Hospital:",
+                hospital.hospital_id,
+                "| Name:",
+                hospital.hospital_name,
+                "| Location:",
+                hospital.location,
+                "| Status:",
+                hospital.status,
+            )
+
+        return response
+
+    except grpc.RpcError as error:
+        print("Get all hospitals failed")
+        print("Status code:", error.code())
+        print("Details:", error.details())
+
+    finally:
+        channel.close()

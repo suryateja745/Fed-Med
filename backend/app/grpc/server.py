@@ -98,6 +98,7 @@ class FedMedService(fedmed_pb2_grpc.FedMedServiceServicer):
                 f"Hospital {hospital_id} is not registered",
             )
 
+
         try:
             return fedmed_pb2.GetHospitalStatusResponse(
                 success=True,
@@ -107,13 +108,36 @@ class FedMedService(fedmed_pb2_grpc.FedMedServiceServicer):
                 status=hospital["status"],
                 message=f"Hospital {hospital_id} is online",
             )
-
         except Exception:
             context.abort(
                 grpc.StatusCode.INTERNAL,
                 "Internal server error while getting hospital status",
             )
 
+    def GetAllHospitals(self, request, context):
+        try:
+            hospitals = []
+
+            for hospital_id, hospital in self.hospitals.items():
+                hospitals.append(
+                    fedmed_pb2.Hospital(
+                        hospital_id=hospital_id,
+                        hospital_name=hospital["hospital_name"],
+                        location=hospital["location"],
+                        status=hospital["status"],
+                    )
+                )
+
+            return fedmed_pb2.GetAllHospitalsResponse(
+                success=True,
+                hospitals=hospitals,
+                message=f"{len(hospitals)} hospital(s) retrieved successfully",
+            )
+        except Exception:
+            context.abort(
+                grpc.StatusCode.INTERNAL,
+                "Internal server error while getting hospitals",
+            )
 
 def serve():
     server = grpc.server(

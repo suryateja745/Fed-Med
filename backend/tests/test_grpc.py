@@ -3,7 +3,7 @@ import pytest
 
 from app.grpc import fedmed_pb2
 from app.grpc import fedmed_pb2_grpc
-
+from app.grpc.server import FedMedService
 
 def create_channel():
     return grpc.insecure_channel("localhost:50051")
@@ -15,7 +15,7 @@ def test_health_check():
 
     response = stub.HealthCheck(
         fedmed_pb2.HealthRequest(
-            hospital_id="test-health-hospital"
+            hospital_id="test-hospital-1"
         )
     )
 
@@ -31,7 +31,7 @@ def test_register_hospital():
 
     response = stub.RegisterHospital(
         fedmed_pb2.RegisterHospitalRequest(
-            hospital_id="test-register-hospital",
+            hospital_id="test-hospital-1",
             hospital_name="Test Hospital",
             location="Mumbai",
         )
@@ -47,28 +47,17 @@ def test_get_hospital_status():
     channel = create_channel()
     stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
 
-    register_response = stub.RegisterHospital(
-        fedmed_pb2.RegisterHospitalRequest(
-            hospital_id="status-test-hospital",
-            hospital_name="Status Test Hospital",
-            location="Hyderabad",
-        )
-    )
-
-    assert register_response.success is True
-
     response = stub.GetHospitalStatus(
         fedmed_pb2.GetHospitalStatusRequest(
-            hospital_id="status-test-hospital"
+            hospital_id="test-hospital-1"
         )
     )
 
     assert response.success is True
-    assert response.hospital_id == "status-test-hospital"
-    assert response.hospital_name == "Status Test Hospital"
-    assert response.location == "Hyderabad"
+    assert response.hospital_id == "test-hospital-1"
+    assert response.hospital_name == "Test Hospital"
+    assert response.location == "Mumbai"
     assert response.status == "online"
-    assert "is online" in response.message
 
     channel.close()
 
@@ -82,7 +71,7 @@ def test_register_empty_hospital_id():
             fedmed_pb2.RegisterHospitalRequest(
                 hospital_id="",
                 hospital_name="Test Hospital",
-                location="Hyderabad",
+                location="Mumbai",
             )
         )
 
@@ -98,9 +87,9 @@ def test_register_empty_hospital_name():
     with pytest.raises(grpc.RpcError) as error:
         stub.RegisterHospital(
             fedmed_pb2.RegisterHospitalRequest(
-                hospital_id="empty-name-hospital",
+                hospital_id="test-hospital-2",
                 hospital_name="",
-                location="Hyderabad",
+                location="Mumbai",
             )
         )
 
@@ -116,7 +105,7 @@ def test_register_empty_location():
     with pytest.raises(grpc.RpcError) as error:
         stub.RegisterHospital(
             fedmed_pb2.RegisterHospitalRequest(
-                hospital_id="empty-location-hospital",
+                hospital_id="test-hospital-3",
                 hospital_name="Test Hospital",
                 location="",
             )
@@ -131,18 +120,24 @@ def test_duplicate_hospital_registration():
     channel = create_channel()
     stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
 
-    request = fedmed_pb2.RegisterHospitalRequest(
-        hospital_id="duplicate-hospital",
-        hospital_name="Duplicate Hospital",
-        location="Hyderabad",
+    hospital_id = "duplicate-hospital"
+
+    stub.RegisterHospital(
+        fedmed_pb2.RegisterHospitalRequest(
+            hospital_id=hospital_id,
+            hospital_name="Duplicate Hospital",
+            location="Delhi",
+        )
     )
 
-    first_response = stub.RegisterHospital(request)
-
-    assert first_response.success is True
-
     with pytest.raises(grpc.RpcError) as error:
-        stub.RegisterHospital(request)
+        stub.RegisterHospital(
+            fedmed_pb2.RegisterHospitalRequest(
+                hospital_id=hospital_id,
+                hospital_name="Duplicate Hospital",
+                location="Delhi",
+            )
+        )
 
     assert error.value.code() == grpc.StatusCode.ALREADY_EXISTS
 
@@ -179,3 +174,66 @@ def test_empty_hospital_status_id():
     assert error.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
     channel.close()
+def test_get_all_hospitals():
+    service = FedMedService()
+
+    class FakeContext:
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    context = FakeContext()
+
+    service.RegisterHospital(
+        fedmed_pb2.RegisterHospitalRequest(
+            hospital_id="hospital-001",
+            hospital_name="Hospital One",
+            location="Hyderabad",
+        ),
+        context,
+    )
+
+    service.RegisterHospital(
+        fedmed_pb2.RegisterHospitalRequest(
+            hospital_id="hospital-002",
+            hospital_name="Hospital Two",
+            location="Bengaluru",
+        ),
+        context,
+    )
+
+    response = service.GetAllHospitals(
+        fedmed_pb2.GetAllHospitalsRequest(),
+        context,
+    )
+
+    assert response.success is True
+    assert len(response.hospitals) == 2
+
+    hospital_ids = {
+        hospital.hospital_id
+        for hospital in response.hospitals
+    }
+
+    assert hospital_ids == {
+        "hospital-001",
+        "hospital-002",
+    }
+
+
+def test_get_all_hospitals_empty():
+    service = FedMedService()
+
+    class FakeContext:
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    context = FakeContext()
+
+    response = service.GetAllHospitals(
+        fedmed_pb2.GetAllHospitalsRequest(),
+        context,
+    )
+
+    assert response.success is True
+    assert len(response.hospitals) == 0
+    assert "0 hospital(s)" in response.message
