@@ -105,3 +105,43 @@ def get_hospital_status(hospital_id: str):
 
     finally:
         channel.close()
+def get_all_hospitals():
+    channel = grpc.insecure_channel(GRPC_SERVER)
+    stub = fedmed_pb2_grpc.FedMedServiceStub(channel)
+
+    try:
+        request = fedmed_pb2.GetAllHospitalsRequest()
+
+        response = stub.GetAllHospitals(
+            request,
+            timeout=5
+        )
+
+        hospitals = []
+
+        for hospital in response.hospitals:
+            hospitals.append(
+                {
+                    "hospital_id": hospital.hospital_id,
+                    "hospital_name": hospital.hospital_name,
+                    "location": hospital.location,
+                    "status": hospital.status,
+                }
+            )
+
+        return {
+            "success": response.success,
+            "hospitals": hospitals,
+            "message": response.message,
+        }
+
+    except grpc.RpcError as error:
+        return {
+            "success": False,
+            "hospitals": [],
+            "status": error.code().name,
+            "message": error.details(),
+        }
+
+    finally:
+        channel.close()

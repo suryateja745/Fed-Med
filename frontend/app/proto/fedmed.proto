@@ -6,6 +6,7 @@ service FedMedService {
     rpc HealthCheck (HealthRequest) returns (HealthResponse);
     rpc RegisterHospital (RegisterHospitalRequest) returns (RegisterHospitalResponse);
     rpc GetHospitalStatus (GetHospitalStatusRequest) returns (GetHospitalStatusResponse);
+    rpc GetAllHospitals (GetAllHospitalsRequest) returns (GetAllHospitalsResponse);
 }
 
 message HealthRequest {
@@ -39,4 +40,20 @@ message GetHospitalStatusResponse {
     string location = 4;
     string status = 5;
     string message = 6;
+}
+
+message GetAllHospitalsRequest {
+}
+
+message Hospital {
+    string hospital_id = 1;
+    string hospital_name = 2;
+    string location = 3;
+    string status = 4;
+}
+
+message GetAllHospitalsResponse {
+    bool success = 1;
+    repeated Hospital hospitals = 2;
+    string message = 3;
 }
