@@ -320,15 +320,173 @@ def show_hospital_registration():
 def show_federated_learning():
     st.title("🔄 Federated Learning")
 
-    st.info(
-        "Federated learning configuration will be "
-        "implemented in the next development phase."
+    st.write(
+        "Monitor the FedMed federated learning server "
+        "and participating hospitals."
     )
 
-    st.metric("Connected Hospitals", "0")
-    st.metric("Current Round", "0")
+    st.divider()
 
+    # Federated learning server configuration
+    st.subheader("Flower Server")
 
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "Server Address",
+            "localhost:8080",
+        )
+
+    with col2:
+        st.metric(
+            "Configured Rounds",
+            "1",
+        )
+
+    with col3:
+        st.metric(
+            "Strategy",
+            "FedAvg",
+        )
+
+    st.divider()
+
+    # Server status
+    st.subheader("Server Status")
+
+    if st.button("Check Flower Server"):
+
+        import socket
+
+        try:
+            connection = socket.create_connection(
+                ("localhost", 8080),
+                timeout=2,
+            )
+            connection.close()
+
+            st.success(
+                "🟢 Flower server is running"
+            )
+
+        except OSError:
+            st.error(
+                "🔴 Flower server is not running"
+            )
+
+            st.caption(
+                "Start the Flower server from the backend "
+                "before checking its status."
+            )
+
+    st.divider()
+
+    # Participating hospitals
+    st.subheader("Participating Hospitals")
+
+    with st.spinner("Loading hospitals..."):
+        result = get_all_hospitals()
+
+    if not result["success"]:
+        st.error(
+            f"Unable to load hospitals: "
+            f"{result.get('status', 'UNKNOWN')}"
+        )
+        st.caption(
+            result.get(
+                "message",
+                "Could not retrieve hospitals.",
+            )
+        )
+        return
+
+    hospitals = result.get("hospitals", [])
+
+    if not hospitals:
+        st.warning(
+            "No hospitals are currently registered."
+        )
+        return
+
+    st.success(
+        f"{len(hospitals)} hospital(s) available "
+        "for federated learning."
+    )
+
+    columns = st.columns(3)
+
+    for index, hospital in enumerate(hospitals):
+
+        with columns[index % 3]:
+
+            with st.container(border=True):
+
+                st.write(
+                    f"### 🏥 "
+                    f"{hospital['hospital_name']}"
+                )
+
+                st.write(
+                    f"**Hospital ID:** "
+                    f"{hospital['hospital_id']}"
+                )
+
+                st.write(
+                    f"**Location:** "
+                    f"{hospital['location']}"
+                )
+
+                status = hospital["status"]
+
+                if status.lower() == "online":
+                    st.success(
+                        f"🟢 {status}"
+                    )
+                elif status.lower() == "offline":
+                    st.error(
+                        f"🔴 {status}"
+                    )
+                else:
+                    st.warning(
+                        f"🟡 {status}"
+                    )
+
+    st.divider()
+
+    # Federated learning progress
+    st.subheader("Federated Learning Progress")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.metric(
+            "Current Round",
+            "0 / 1",
+        )
+
+    with col2:
+        st.metric(
+            "Clients Required",
+            "3",
+        )
+
+    with col3:
+        st.metric(
+            "Training Status",
+            "Not Started",
+        )
+
+    st.progress(
+        0,
+        text="Waiting for federated training to start",
+    )
+
+    st.info(
+        "The Flower server is configured with the "
+        "FedAvg strategy and requires 3 hospitals "
+        "for federated training."
+    )
 def show_model_training():
     st.title("🧠 Model Training")
 
