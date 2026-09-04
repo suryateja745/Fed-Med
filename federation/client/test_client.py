@@ -79,8 +79,11 @@ class TestFedMedClient(unittest.TestCase):
         self.assertGreater(len(initial_params), 0)
         self.assertTrue(all(isinstance(p, np.ndarray) for p in initial_params))
 
-        # Perturb parameters
-        perturbed_params = [p + 0.5 for p in initial_params]
+        # Perturb parameters (handle integer buffers like num_batches_tracked correctly)
+        perturbed_params = [
+            (p + 1) if np.issubdtype(p.dtype, np.integer) else (p + 0.5)
+            for p in initial_params
+        ]
         self.client.set_parameters(perturbed_params)
 
         # Re-extract and verify values match perturbed parameters

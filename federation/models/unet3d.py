@@ -296,8 +296,10 @@ def get_model_parameters(model: nn.Module) -> List[np.ndarray]:
 
 def set_model_parameters(model: nn.Module, parameters: List[np.ndarray]) -> None:
     # Load a list of NumPy arrays (Flower aggregated weights) into model state_dict.
-    params_dict = zip(model.state_dict().keys(), parameters)
-    state_dict = {key: torch.tensor(val) for key, val in params_dict}
+    current_state = model.state_dict()
+    state_dict = {}
+    for (key, orig_val), val in zip(current_state.items(), parameters):
+        state_dict[key] = torch.as_tensor(val, dtype=orig_val.dtype, device=orig_val.device)
     model.load_state_dict(state_dict, strict=True)
 
 
