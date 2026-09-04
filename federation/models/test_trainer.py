@@ -1,6 +1,5 @@
 """
 Unit tests for Loss Functions, Dice Metrics, and Local Client Trainer.
-======================================================================
 Tests Dice computation accuracy, loss decrease on training steps,
 and multi-epoch local client execution.
 """

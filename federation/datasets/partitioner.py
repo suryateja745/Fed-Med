@@ -1,6 +1,5 @@
 """
 Hospital Dataset Partitioner and Local Ingestion Pipeline.
-==========================================================
 Manages local MRI data loading for individual hospital nodes (Hospital A, B, C)
 without uploading or transmitting raw medical scans.
 Supports IID, Non-IID Dirichlet, and Quantity-Skew partitioning schemes.

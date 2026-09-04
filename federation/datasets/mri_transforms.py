@@ -1,6 +1,5 @@
 """
 MONAI Transforms and Preprocessing Pipeline for 3D Brain Tumor MRI Scans.
-=========================================================================
 Handles multi-modal MRI scans (FLAIR, T1, T1ce, T2) and BraTS-style multi-region
 segmentations (WT: Whole Tumor, TC: Tumor Core, ET: Enhancing Tumor).
 """

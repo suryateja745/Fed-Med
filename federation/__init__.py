@@ -1,6 +1,5 @@
 """
-FedMed Federated Learning Module
-================================
+FedMed Federated Learning Module.
 Flower-based federated training framework for privacy-preserving medical imaging.
 """
 

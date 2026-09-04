@@ -1,6 +1,5 @@
 """
 Unit tests for 3D U-Net Model Architecture and Utilities.
-=========================================================
 Tests forward pass on synthetic 3D MRI tensors, parameter extraction for Flower,
 and checkpoint serialization.
 """
