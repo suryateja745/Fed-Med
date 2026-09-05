@@ -3,6 +3,14 @@ venv/
 map.md
 progress.md
 
+# Local Datasets & Medical Scans
+data/
+datasets/
+*.nii
+*.nii.gz
+*.npy
+*.npz
+
 # Python Bytecode & Cache
 __pycache__/
 *.py[cod]
