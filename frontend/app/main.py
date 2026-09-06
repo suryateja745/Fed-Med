@@ -88,3 +88,32 @@ with c3:
         "Disconnected Nodes",
         sum(h["status"] != "Connected" for h in hospitals),
     )
+st.divider()
+
+st.subheader("Federated Training")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric("Training Rounds", "3")
+
+with col2:
+    st.metric("Hospitals Participating", "3")
+
+with col3:
+    st.metric("Aggregation", "FedAvg")
+
+st.markdown("### Training Progress")
+
+training_rounds = [
+    ("Round 1", "Completed"),
+    ("Round 2", "Completed"),
+    ("Round 3", "Completed"),
+]
+
+for round_name, status in training_rounds:
+    st.write(f"**{round_name}** — {status}")
+
+st.success(
+    "Federated training completed successfully across all 3 hospitals."
+)
