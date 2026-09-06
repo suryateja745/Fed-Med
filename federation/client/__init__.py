@@ -3,6 +3,7 @@ Flower client worker implementations for local hospital nodes in FedMed.
 """
 
 from federation.client.fl_client import (
+    ClientHistoryLogger,
     FedMedClient,
     create_client,
     start_fedmed_client,
@@ -15,6 +16,7 @@ from federation.client.run_client import (
 )
 
 __all__ = [
+    "ClientHistoryLogger",
     "FedMedClient",
     "create_client",
     "start_fedmed_client",

@@ -4,6 +4,7 @@ Manages local training epochs, gradient clipping, learning rate scheduling,
 optimizer setups, and validation metric evaluations on hospital nodes.
 """
 
+import time
 from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
@@ -68,8 +69,9 @@ def train_epoch(
     Execute a single training epoch across all batches in train_loader.
 
     Returns:
-        Dictionary with 'train_loss' and 'num_samples'.
+        Dictionary with 'train_loss', 'num_samples', and 'epoch_duration'.
     """
+    start_time = time.perf_counter()
     model.train()
     model.to(device)
 
@@ -96,10 +98,12 @@ def train_epoch(
         total_loss += loss.item() * batch_size
         total_samples += batch_size
 
+    elapsed = time.perf_counter() - start_time
     avg_loss = total_loss / max(1, total_samples)
     return {
         "train_loss": round(float(avg_loss), 4),
         "num_samples": total_samples,
+        "epoch_duration": round(float(elapsed), 4),
     }
 
 
@@ -115,6 +119,7 @@ def validate(
     Returns:
         Dictionary with 'val_loss', 'val_dice', and per-region Dice scores.
     """
+    start_time = time.perf_counter()
     model.eval()
     model.to(device)
 
@@ -141,10 +146,14 @@ def validate(
             dice_metrics = compute_dice_score(outputs, labels)
             all_dice_scores.append(dice_metrics)
 
+    elapsed = time.perf_counter() - start_time
     avg_loss = total_loss / max(1, total_samples)
 
     # Average metrics across batches
-    results = {"val_loss": round(float(avg_loss), 4)}
+    results = {
+        "val_loss": round(float(avg_loss), 4),
+        "val_duration": round(float(elapsed), 4),
+    }
     if all_dice_scores:
         for key in all_dice_scores[0].keys():
             mean_metric = float(np.mean([d[key] for d in all_dice_scores]))
@@ -175,13 +184,15 @@ def train_local_client(
 
     Returns:
         Consolidated metrics dictionary reporting training loss, validation Dice,
-        and sample counts for Flower server reporting.
+        durations, and sample counts for Flower server reporting.
     """
+    start_total_time = time.perf_counter()
     optimizer = get_optimizer(model, optimizer_name=optimizer_name, lr=lr, weight_decay=weight_decay)
     scheduler = get_lr_scheduler(optimizer, scheduler_name=scheduler_name, epochs=epochs)
     loss_fn = get_loss_function(loss_name)
 
     metrics_history = []
+    epoch_durations = []
     total_trained_samples = 0
 
     for epoch in range(1, epochs + 1):
@@ -195,16 +206,22 @@ def train_local_client(
         )
         total_trained_samples = epoch_metrics["num_samples"]
         metrics_history.append(epoch_metrics["train_loss"])
+        epoch_durations.append(epoch_metrics["epoch_duration"])
 
         if scheduler is not None:
             scheduler.step()
 
+    total_duration = time.perf_counter() - start_total_time
     final_train_loss = metrics_history[-1] if metrics_history else 0.0
+    avg_epoch_duration = float(np.mean(epoch_durations)) if epoch_durations else 0.0
 
     results = {
         "train_loss": round(float(final_train_loss), 4),
         "num_samples": total_trained_samples,
         "epochs_completed": epochs,
+        "epoch_duration": round(avg_epoch_duration, 4),
+        "total_train_duration": round(float(total_duration), 4),
+        "epoch_losses": [round(l, 4) for l in metrics_history],
     }
 
     # Optional local validation evaluation

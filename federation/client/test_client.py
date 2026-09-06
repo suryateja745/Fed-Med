@@ -1,9 +1,10 @@
 """
-Unit tests for FedMed Flower NumPyClient.
+Unit tests for FedMed Flower NumPyClient and Client History Logger.
 Tests get_parameters, set_parameters, local fit round execution,
-validation evaluate round, and factory client creation.
+validation evaluate round, telemetry packaging, JSON logging, and factory client creation.
 """
 
+import json
 import sys
 import tempfile
 import unittest
@@ -17,7 +18,11 @@ repo_root = Path(__file__).resolve().parent.parent.parent
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
-from federation.client.fl_client import FedMedClient, create_client
+from federation.client.fl_client import (
+    ClientHistoryLogger,
+    FedMedClient,
+    create_client,
+)
 from federation.datasets.partitioner import generate_synthetic_mri_dataset
 from federation.models.unet3d import create_unet3d_model, get_model_parameters
 
@@ -100,7 +105,7 @@ class TestFedMedClient(unittest.TestCase):
         self.assertEqual(props["num_val_samples"], 2)
 
     def test_fit_round_execution(self):
-        """Verify local fit round executes and returns updated weights and metrics."""
+        """Verify local fit round executes and returns rich telemetry and duration metrics."""
         params = self.client.get_parameters()
         config = {
             "server_round": 1,
@@ -117,24 +122,64 @@ class TestFedMedClient(unittest.TestCase):
         self.assertEqual(metrics["hospital_id"], "hospital_test")
         self.assertIn("train_loss", metrics)
         self.assertEqual(metrics["epochs_completed"], 2)
+        self.assertIn("epoch_duration", metrics)
+        self.assertIn("round_duration", metrics)
+        self.assertIn("learning_rate", metrics)
         self.assertIn("val_loss", metrics)
         self.assertIn("val_dice_mean", metrics)
+        self.assertIn("dice_score", metrics)
+
+        # Verify history logger recorded the fit round
+        history = self.client.history_logger.get_history()
+        self.assertIn("fit_history", history)
+        self.assertGreater(len(history["fit_history"]), 0)
+        last_entry = history["fit_history"][-1]
+        self.assertEqual(last_entry["server_round"], 1)
+        self.assertEqual(last_entry["local_epochs"], 2)
+        self.assertIn("epoch_losses", last_entry)
 
     def test_evaluate_round_execution(self):
-        """Verify evaluate round returns validation loss and Dice score."""
+        """Verify evaluate round returns validation loss, Dice scores, and duration."""
         params = self.client.get_parameters()
-        config = {"loss_function": "DiceCELoss"}
+        config = {"loss_function": "DiceCELoss", "server_round": 1}
 
         val_loss, num_samples, metrics = self.client.evaluate(params, config)
 
         self.assertIsInstance(val_loss, float)
         self.assertEqual(num_samples, 2)
         self.assertEqual(metrics["hospital_id"], "hospital_test")
+        self.assertIn("val_loss", metrics)
+        self.assertIn("dice_score", metrics)
         self.assertIn("val_dice_mean", metrics)
         self.assertTrue(0.0 <= metrics["val_dice_mean"] <= 1.0)
         self.assertIn("val_dice_tc", metrics)
         self.assertIn("val_dice_wt", metrics)
         self.assertIn("val_dice_et", metrics)
+        self.assertIn("eval_duration", metrics)
+
+        # Verify history logger recorded the evaluation round
+        history = self.client.history_logger.get_history()
+        self.assertIn("evaluate_history", history)
+        self.assertGreater(len(history["evaluate_history"]), 0)
+        last_entry = history["evaluate_history"][-1]
+        self.assertEqual(last_entry["server_round"], 1)
+        self.assertIn("eval_duration_seconds", last_entry)
+
+    def test_client_history_logger_standalone(self):
+        """Verify standalone ClientHistoryLogger file creation and appending."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logger = ClientHistoryLogger(hospital_id="test_node", log_dir=tmp_dir)
+            log_file = Path(tmp_dir) / "test_node_history.json"
+            self.assertTrue(log_file.exists())
+
+            logger.log_fit_round({"round": 1, "loss": 0.42})
+            logger.log_evaluate_round({"round": 1, "dice": 0.88})
+
+            history = logger.get_history()
+            self.assertEqual(len(history["fit_history"]), 1)
+            self.assertEqual(len(history["evaluate_history"]), 1)
+            self.assertEqual(history["fit_history"][0]["loss"], 0.42)
+            self.assertEqual(history["evaluate_history"][0]["dice"], 0.88)
 
     def test_create_client_factory_on_synthetic_data(self):
         """Verify create_client factory with on-disk synthetic data."""
@@ -168,6 +213,7 @@ class TestFedMedClient(unittest.TestCase):
             self.assertEqual(len(updated_params), len(params))
             self.assertGreater(num_samples, 0)
             self.assertIn("train_loss", metrics)
+            self.assertIn("round_duration", metrics)
 
 
 if __name__ == "__main__":

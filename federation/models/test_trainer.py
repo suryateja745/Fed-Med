@@ -134,6 +134,7 @@ class TestTrainerAndMetrics(unittest.TestCase):
 
         self.assertLess(last_loss, first_loss)
         self.assertEqual(metrics["num_samples"], 4)
+        self.assertIn("epoch_duration", metrics)
 
     def test_validation_evaluation(self):
         """Verify validation function calculates val_loss and val_dice."""
@@ -145,6 +146,7 @@ class TestTrainerAndMetrics(unittest.TestCase):
         )
         val_results = validate(model, self.loader)
         self.assertIn("val_loss", val_results)
+        self.assertIn("val_duration", val_results)
         self.assertIn("val_dice_mean", val_results)
         self.assertTrue(0.0 <= val_results["val_dice_mean"] <= 1.0)
 
@@ -167,6 +169,8 @@ class TestTrainerAndMetrics(unittest.TestCase):
         self.assertIn("train_loss", results)
         self.assertIn("val_loss", results)
         self.assertIn("val_dice_mean", results)
+        self.assertIn("epoch_duration", results)
+        self.assertIn("total_train_duration", results)
         self.assertEqual(results["epochs_completed"], 2)
         self.assertEqual(results["num_samples"], 4)
 

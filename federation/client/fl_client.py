@@ -1,10 +1,14 @@
 """
 Flower NumPyClient implementation for local hospital nodes in FedMed.
 Handles parameter extraction, parameter injection, local training (fit),
-and validation evaluation (evaluate) for 3D Brain Tumor MRI segmentation.
+validation evaluation (evaluate), rich metrics packaging, and persistent
+client telemetry JSON logging for 3D Brain Tumor MRI segmentation.
 """
 
+from datetime import datetime, timezone
+import json
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
@@ -32,6 +36,78 @@ from federation.utils.config_loader import load_config
 from federation.utils.logger import setup_logger
 
 
+# Client Telemetry History Logger
+
+class ClientHistoryLogger:
+    """
+    Local client-side JSON logger for federated training rounds and evaluations.
+    Maintains persistent telemetry records for auditing, performance tracking, and debugging.
+    """
+
+    def __init__(self, hospital_id: str, log_dir: Union[str, Path] = "./logs") -> None:
+        self.hospital_id = str(hospital_id)
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.history_file = self.log_dir / f"{self.hospital_id}_history.json"
+        self._init_history_file()
+
+    def _init_history_file(self) -> None:
+        if not self.history_file.exists():
+            initial_data = {
+                "hospital_id": self.hospital_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "fit_history": [],
+                "evaluate_history": [],
+            }
+            self._write_json(initial_data)
+
+    def _read_json(self) -> Dict[str, Any]:
+        try:
+            if self.history_file.exists():
+                with open(self.history_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {
+            "hospital_id": self.hospital_id,
+            "fit_history": [],
+            "evaluate_history": [],
+        }
+
+    def _write_json(self, data: Dict[str, Any]) -> None:
+        try:
+            with open(self.history_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception:
+            pass
+
+    def log_fit_round(self, round_data: Dict[str, Any]) -> None:
+        """Append training round telemetry entry to history JSON."""
+        data = self._read_json()
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **round_data,
+        }
+        data.setdefault("fit_history", []).append(record)
+        self._write_json(data)
+
+    def log_evaluate_round(self, eval_data: Dict[str, Any]) -> None:
+        """Append evaluation telemetry entry to history JSON."""
+        data = self._read_json()
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **eval_data,
+        }
+        data.setdefault("evaluate_history", []).append(record)
+        self._write_json(data)
+
+    def get_history(self) -> Dict[str, Any]:
+        """Read and return full telemetry history dictionary."""
+        return self._read_json()
+
+
+# Core FedMed Flower Client Worker
+
 class FedMedClient(NumPyClient):
     """
     Flower NumPyClient worker for local hospital nodes in FedMed.
@@ -42,6 +118,7 @@ class FedMedClient(NumPyClient):
     - Running local training epochs on private hospital MRI scans.
     - Computing validation loss and multi-class Dice metrics (WT, TC, ET).
     - Preserving patient privacy by never exposing raw MRI scans or patient records.
+    - Recording rich training telemetry and updating client_history.json.
     """
 
     def __init__(
@@ -68,6 +145,11 @@ class FedMedClient(NumPyClient):
 
         self.model.to(self.device)
         self.logger = setup_logger(name=f"FedMedClient-{self.hospital_id}")
+
+        # Initialize persistent JSON telemetry logger
+        log_dir = self.config.get("storage", {}).get("logs_dir", "./logs")
+        self.history_logger = ClientHistoryLogger(hospital_id=self.hospital_id, log_dir=log_dir)
+
         self.logger.info(
             f"Initialized FedMedClient for '{self.hospital_id}' on device '{self.device}' "
             f"(Train batches: {len(self.train_loader)}, "
@@ -115,7 +197,7 @@ class FedMedClient(NumPyClient):
     ) -> Tuple[List[np.ndarray], int, Dict[str, Any]]:
         """
         Receive global server parameters, train locally for E epochs on private MRI scans,
-        and return updated parameters with training metrics.
+        and return updated parameters with rich training telemetry.
 
         Args:
             parameters: Global model parameters from Flower server.
@@ -124,6 +206,8 @@ class FedMedClient(NumPyClient):
         Returns:
             Tuple of (updated_parameters, num_train_samples, metrics_dict).
         """
+        start_fit_time = time.perf_counter()
+
         # Step 1: Update local model with received global parameters
         if parameters:
             self.set_parameters(parameters)
@@ -159,6 +243,8 @@ class FedMedClient(NumPyClient):
             gradient_clip_val=gradient_clip_val,
         )
 
+        fit_duration = time.perf_counter() - start_fit_time
+
         # Step 4: Extract updated parameters
         updated_parameters = self.get_parameters()
         num_samples = int(
@@ -168,18 +254,52 @@ class FedMedClient(NumPyClient):
             )
         )
 
-        # Step 5: Format metrics dictionary for Flower
+        # Step 5: Format metrics dictionary for Flower server
         metrics = {
             "hospital_id": self.hospital_id,
             "train_loss": float(train_results.get("train_loss", 0.0)),
             "epochs_completed": int(train_results.get("epochs_completed", local_epochs)),
+            "epoch_duration": float(train_results.get("epoch_duration", 0.0)),
+            "round_duration": round(float(fit_duration), 4),
+            "learning_rate": float(learning_rate),
+            "num_samples": num_samples,
+            "device": str(self.device),
         }
-        for key in ["val_loss", "val_dice_mean", "val_dice_tc", "val_dice_wt", "val_dice_et"]:
-            if key in train_results:
-                metrics[key] = float(train_results[key])
+        if "val_loss" in train_results:
+            metrics["val_loss"] = float(train_results["val_loss"])
+        if "val_dice_mean" in train_results:
+            metrics["dice_score"] = float(train_results["val_dice_mean"])
+            metrics["val_dice_mean"] = float(train_results["val_dice_mean"])
+        if "val_dice_tc" in train_results:
+            metrics["val_dice_tc"] = float(train_results["val_dice_tc"])
+        if "val_dice_wt" in train_results:
+            metrics["val_dice_wt"] = float(train_results["val_dice_wt"])
+        if "val_dice_et" in train_results:
+            metrics["val_dice_et"] = float(train_results["val_dice_et"])
+
+        # Step 6: Log telemetry to local client history JSON file
+        self.history_logger.log_fit_round({
+            "server_round": server_round,
+            "local_epochs": local_epochs,
+            "learning_rate": learning_rate,
+            "optimizer": optimizer_name,
+            "loss_function": loss_name,
+            "train_loss": metrics["train_loss"],
+            "epoch_losses": train_results.get("epoch_losses", []),
+            "epoch_duration_seconds": metrics["epoch_duration"],
+            "round_duration_seconds": metrics["round_duration"],
+            "num_train_samples": num_samples,
+            "val_loss": metrics.get("val_loss"),
+            "dice_score": metrics.get("dice_score"),
+            "val_dice_mean": metrics.get("val_dice_mean"),
+            "val_dice_tc": metrics.get("val_dice_tc"),
+            "val_dice_wt": metrics.get("val_dice_wt"),
+            "val_dice_et": metrics.get("val_dice_et"),
+            "device": self.device,
+        })
 
         self.logger.info(
-            f"[{self.hospital_id}] Completed Round {server_round} training: "
+            f"[{self.hospital_id}] Completed Round {server_round} training in {fit_duration:.2f}s: "
             f"train_loss={metrics['train_loss']:.4f}, samples={num_samples}"
         )
 
@@ -200,6 +320,8 @@ class FedMedClient(NumPyClient):
         Returns:
             Tuple of (val_loss, num_val_samples, metrics_dict).
         """
+        start_eval_time = time.perf_counter()
+
         # Step 1: Update local model with received global parameters
         if parameters:
             self.set_parameters(parameters)
@@ -207,7 +329,7 @@ class FedMedClient(NumPyClient):
         eval_loader = self.val_loader if self.val_loader is not None and len(self.val_loader) > 0 else self.train_loader
         if eval_loader is None or len(eval_loader) == 0:
             self.logger.warning(f"[{self.hospital_id}] No evaluation data available.")
-            return 0.0, 0, {"val_dice_mean": 0.0, "hospital_id": self.hospital_id}
+            return 0.0, 0, {"val_dice_mean": 0.0, "dice_score": 0.0, "hospital_id": self.hospital_id}
 
         loss_name = str(config.get("loss_function", self.config.get("training", {}).get("loss_function", "DiceCELoss")))
         loss_fn = get_loss_function(loss_name)
@@ -220,7 +342,9 @@ class FedMedClient(NumPyClient):
             device=self.device,
         )
 
+        eval_duration = time.perf_counter() - start_eval_time
         val_loss = float(val_results.get("val_loss", 0.0))
+        dice_score = float(val_results.get("val_dice_mean", 0.0))
         num_samples = (
             len(eval_loader.dataset)
             if hasattr(eval_loader, "dataset") and eval_loader.dataset is not None
@@ -230,15 +354,34 @@ class FedMedClient(NumPyClient):
         metrics = {
             "hospital_id": self.hospital_id,
             "val_loss": val_loss,
-            "val_dice_mean": float(val_results.get("val_dice_mean", 0.0)),
+            "dice_score": dice_score,
+            "val_dice_mean": dice_score,
             "val_dice_tc": float(val_results.get("val_dice_tc", 0.0)),
             "val_dice_wt": float(val_results.get("val_dice_wt", 0.0)),
             "val_dice_et": float(val_results.get("val_dice_et", 0.0)),
+            "eval_duration": round(float(eval_duration), 4),
+            "num_samples": int(num_samples),
+            "device": str(self.device),
         }
 
+        # Step 3: Log evaluation telemetry to local client history JSON file
+        server_round = config.get("server_round", config.get("round", None))
+        self.history_logger.log_evaluate_round({
+            "server_round": server_round,
+            "val_loss": val_loss,
+            "dice_score": dice_score,
+            "val_dice_mean": dice_score,
+            "val_dice_tc": metrics["val_dice_tc"],
+            "val_dice_wt": metrics["val_dice_wt"],
+            "val_dice_et": metrics["val_dice_et"],
+            "eval_duration_seconds": metrics["eval_duration"],
+            "num_val_samples": int(num_samples),
+            "device": self.device,
+        })
+
         self.logger.info(
-            f"[{self.hospital_id}] Evaluation completed: "
-            f"loss={val_loss:.4f}, dice_mean={metrics['val_dice_mean']:.4f}, "
+            f"[{self.hospital_id}] Evaluation completed in {eval_duration:.2f}s: "
+            f"loss={val_loss:.4f}, dice_mean={dice_score:.4f}, "
             f"dice_tc={metrics['val_dice_tc']:.4f}, dice_wt={metrics['val_dice_wt']:.4f}, "
             f"dice_et={metrics['val_dice_et']:.4f}"
         )
