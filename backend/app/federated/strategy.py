@@ -12,3 +12,38 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             min_evaluate_clients=3,
             min_available_clients=3,
         )
+
+    def aggregate_fit(self, server_round, results, failures):
+        """Aggregate client updates and report federated training metrics."""
+
+        aggregated = super().aggregate_fit(
+            server_round,
+            results,
+            failures,
+        )
+
+        if aggregated[0] is not None:
+            print(
+                f"[Round {server_round}] "
+                f"Federated aggregation completed "
+                f"for {len(results)} hospitals"
+            )
+
+        return aggregated
+
+    def aggregate_evaluate(self, server_round, results, failures):
+        """Aggregate evaluation metrics from all hospitals."""
+
+        aggregated = super().aggregate_evaluate(
+            server_round,
+            results,
+            failures,
+        )
+
+        if aggregated[0] is not None:
+            print(
+                f"[Round {server_round}] "
+                f"Global evaluation loss: {aggregated[0]:.4f}"
+            )
+
+        return aggregated

@@ -9,8 +9,6 @@ class HospitalClient(fl.client.NumPyClient):
 
     def __init__(self, hospital_id: str) -> None:
         self.hospital_id = hospital_id
-
-        # Mock model parameters for today's connectivity task.
         self.parameters = [
             np.array([0.0], dtype=np.float32)
         ]
@@ -27,7 +25,12 @@ class HospitalClient(fl.client.NumPyClient):
         return self.parameters
 
     def fit(self, parameters, config):
-        print(f"[{self.hospital_id}] fit")
+        server_round = config.get("server_round", 0)
+
+        print(
+            f"[{self.hospital_id}] "
+            f"training round {server_round}"
+        )
 
         updated_parameters = [
             np.asarray(parameters[0]) + 0.1
@@ -41,11 +44,17 @@ class HospitalClient(fl.client.NumPyClient):
             {
                 "hospital_id": self.hospital_id,
                 "status": "trained",
+                "round": server_round,
             },
         )
 
     def evaluate(self, parameters, config):
-        print(f"[{self.hospital_id}] evaluate")
+        server_round = config.get("server_round", 0)
+
+        print(
+            f"[{self.hospital_id}] "
+            f"evaluating round {server_round}"
+        )
 
         return (
             0.5,
@@ -53,5 +62,6 @@ class HospitalClient(fl.client.NumPyClient):
             {
                 "hospital_id": self.hospital_id,
                 "status": "evaluated",
+                "round": server_round,
             },
         )
