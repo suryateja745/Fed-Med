@@ -2,6 +2,12 @@
 Flower client worker implementations for local hospital nodes in FedMed.
 """
 
+from federation.client.checkpoint import (
+    ClientCheckpointManager,
+    apply_parameter_delta,
+    compute_delta_statistics,
+    compute_parameter_delta,
+)
 from federation.client.fl_client import (
     ClientHistoryLogger,
     FedMedClient,
@@ -17,6 +23,7 @@ from federation.client.run_client import (
 
 __all__ = [
     "ClientHistoryLogger",
+    "ClientCheckpointManager",
     "FedMedClient",
     "create_client",
     "start_fedmed_client",
@@ -24,4 +31,7 @@ __all__ = [
     "inspect_hardware_environment",
     "validate_dataset_directory",
     "parse_client_args",
+    "compute_parameter_delta",
+    "apply_parameter_delta",
+    "compute_delta_statistics",
 ]

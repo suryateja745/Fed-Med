@@ -1,8 +1,8 @@
 """
 Flower NumPyClient implementation for local hospital nodes in FedMed.
 Handles parameter extraction, parameter injection, local training (fit),
-validation evaluation (evaluate), rich metrics packaging, and persistent
-client telemetry JSON logging for 3D Brain Tumor MRI segmentation.
+validation evaluation (evaluate), checkpoint management, fallback recovery,
+parameter diffing, and persistent client telemetry JSON logging.
 """
 
 from datetime import datetime, timezone
@@ -24,6 +24,12 @@ except ImportError:
         """Fallback NumPyClient base class if Flower is not installed."""
         pass
 
+from federation.client.checkpoint import (
+    ClientCheckpointManager,
+    apply_parameter_delta,
+    compute_delta_statistics,
+    compute_parameter_delta,
+)
 from federation.datasets.partitioner import create_hospital_dataloaders
 from federation.models.metrics import get_loss_function
 from federation.models.trainer import train_local_client, validate
@@ -118,6 +124,8 @@ class FedMedClient(NumPyClient):
     - Running local training epochs on private hospital MRI scans.
     - Computing validation loss and multi-class Dice metrics (WT, TC, ET).
     - Preserving patient privacy by never exposing raw MRI scans or patient records.
+    - Checkpointing local model weights and fallback recovery if local training fails.
+    - Computing parameter deltas (Delta W = W_local - W_global).
     - Recording rich training telemetry and updating client_history.json.
     """
 
@@ -149,6 +157,14 @@ class FedMedClient(NumPyClient):
         # Initialize persistent JSON telemetry logger
         log_dir = self.config.get("storage", {}).get("logs_dir", "./logs")
         self.history_logger = ClientHistoryLogger(hospital_id=self.hospital_id, log_dir=log_dir)
+
+        # Initialize checkpoint manager
+        checkpoint_dir = self.config.get("storage", {}).get("checkpoint_dir", "./checkpoints")
+        self.checkpoint_manager = ClientCheckpointManager(
+            hospital_id=self.hospital_id,
+            checkpoint_dir=checkpoint_dir,
+            keep_last_n=3,
+        )
 
         self.logger.info(
             f"Initialized FedMedClient for '{self.hospital_id}' on device '{self.device}' "
@@ -197,7 +213,9 @@ class FedMedClient(NumPyClient):
     ) -> Tuple[List[np.ndarray], int, Dict[str, Any]]:
         """
         Receive global server parameters, train locally for E epochs on private MRI scans,
-        and return updated parameters with rich training telemetry.
+        and return updated parameters with rich training telemetry and delta statistics.
+
+        Includes automatic fallback recovery if local training fails.
 
         Args:
             parameters: Global model parameters from Flower server.
@@ -208,8 +226,9 @@ class FedMedClient(NumPyClient):
         """
         start_fit_time = time.perf_counter()
 
-        # Step 1: Update local model with received global parameters
+        # Step 1: Backup and inject global parameters
         if parameters:
+            self.checkpoint_manager.backup_global_parameters(parameters)
             self.set_parameters(parameters)
 
         # Step 2: Parse training hyperparameters from server config or client defaults
@@ -228,24 +247,41 @@ class FedMedClient(NumPyClient):
             f"{local_epochs} epochs, lr={learning_rate}, loss={loss_name}, opt={optimizer_name}"
         )
 
-        # Step 3: Run local training epochs
-        train_results = train_local_client(
-            model=self.model,
-            train_loader=self.train_loader,
-            val_loader=self.val_loader,
-            epochs=local_epochs,
-            lr=learning_rate,
-            weight_decay=weight_decay,
-            optimizer_name=optimizer_name,
-            scheduler_name=scheduler_name,
-            loss_name=loss_name,
-            device=self.device,
-            gradient_clip_val=gradient_clip_val,
-        )
+        # Step 3: Run local training epochs with robust fallback recovery
+        try:
+            train_results = train_local_client(
+                model=self.model,
+                train_loader=self.train_loader,
+                val_loader=self.val_loader,
+                epochs=local_epochs,
+                lr=learning_rate,
+                weight_decay=weight_decay,
+                optimizer_name=optimizer_name,
+                scheduler_name=scheduler_name,
+                loss_name=loss_name,
+                device=self.device,
+                gradient_clip_val=gradient_clip_val,
+            )
+        except Exception as e:
+            self.logger.error(
+                f"[{self.hospital_id}] Local training failed during Round {server_round}: {e}. "
+                f"Initiating fallback recovery to global parameter baseline."
+            )
+            # Fallback: restore model to last global parameters
+            self.checkpoint_manager.restore_global_parameters(self.model)
+            fallback_params = self.get_parameters()
+            error_metrics = {
+                "hospital_id": self.hospital_id,
+                "train_loss": float("nan"),
+                "status": "failed",
+                "error": str(e),
+                "device": str(self.device),
+            }
+            return fallback_params, 0, error_metrics
 
         fit_duration = time.perf_counter() - start_fit_time
 
-        # Step 4: Extract updated parameters
+        # Step 4: Extract updated parameters and compute parameter deltas
         updated_parameters = self.get_parameters()
         num_samples = int(
             train_results.get(
@@ -253,6 +289,15 @@ class FedMedClient(NumPyClient):
                 len(self.train_loader.dataset) if hasattr(self.train_loader, "dataset") else len(self.train_loader),
             )
         )
+
+        # Compute parameter deltas (Delta W = W_local - W_global)
+        delta_stats = {}
+        if parameters:
+            try:
+                deltas = compute_parameter_delta(updated_parameters, parameters)
+                delta_stats = compute_delta_statistics(deltas)
+            except Exception as e:
+                self.logger.debug(f"Could not compute delta statistics: {e}")
 
         # Step 5: Format metrics dictionary for Flower server
         metrics = {
@@ -277,7 +322,27 @@ class FedMedClient(NumPyClient):
         if "val_dice_et" in train_results:
             metrics["val_dice_et"] = float(train_results["val_dice_et"])
 
-        # Step 6: Log telemetry to local client history JSON file
+        # Include delta statistics in telemetry
+        if delta_stats:
+            metrics["delta_l2_norm"] = delta_stats.get("l2_norm", 0.0)
+            metrics["delta_max_abs"] = delta_stats.get("max_abs_update", 0.0)
+            metrics["delta_sparsity"] = delta_stats.get("sparsity_ratio", 0.0)
+
+        # Step 6: Save local checkpoint and check for historical best
+        self.checkpoint_manager.save_latest(
+            model=self.model,
+            round_num=server_round,
+            metrics=metrics,
+        )
+        if "dice_score" in metrics:
+            self.checkpoint_manager.save_best(
+                model=self.model,
+                round_num=server_round,
+                dice_score=metrics["dice_score"],
+                metrics=metrics,
+            )
+
+        # Step 7: Log telemetry to local client history JSON file
         self.history_logger.log_fit_round({
             "server_round": server_round,
             "local_epochs": local_epochs,
@@ -295,6 +360,7 @@ class FedMedClient(NumPyClient):
             "val_dice_tc": metrics.get("val_dice_tc"),
             "val_dice_wt": metrics.get("val_dice_wt"),
             "val_dice_et": metrics.get("val_dice_et"),
+            "delta_statistics": delta_stats,
             "device": self.device,
         })
 
@@ -364,8 +430,17 @@ class FedMedClient(NumPyClient):
             "device": str(self.device),
         }
 
-        # Step 3: Log evaluation telemetry to local client history JSON file
-        server_round = config.get("server_round", config.get("round", None))
+        # Step 3: Save best checkpoint if evaluated score improves
+        server_round = config.get("server_round", config.get("round", 0))
+        if dice_score > 0.0:
+            self.checkpoint_manager.save_best(
+                model=self.model,
+                round_num=server_round,
+                dice_score=dice_score,
+                metrics=metrics,
+            )
+
+        # Step 4: Log evaluation telemetry to local client history JSON file
         self.history_logger.log_evaluate_round({
             "server_round": server_round,
             "val_loss": val_loss,
