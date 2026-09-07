@@ -1,8 +1,14 @@
 import flwr as fl
 
+from app.federated.metrics import (
+    record_round,
+    set_hospital_status,
+    set_training_status,
+)
+
 
 class FedMedStrategy(fl.server.strategy.FedAvg):
-    """FedAvg strategy used by the FedMed federated server."""
+    """FedAvg strategy used by the FedMed federated learning server."""
 
     def __init__(self):
         super().__init__(
@@ -14,7 +20,17 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         )
 
     def aggregate_fit(self, server_round, results, failures):
-        """Aggregate client updates and report federated training metrics."""
+        """Aggregate client updates and record training status."""
+
+        set_training_status("training")
+
+        for client, _ in results:
+            hospital_id = client.cid
+
+            set_hospital_status(
+                hospital_id,
+                "trained",
+            )
 
         aggregated = super().aggregate_fit(
             server_round,
@@ -32,7 +48,7 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         return aggregated
 
     def aggregate_evaluate(self, server_round, results, failures):
-        """Aggregate evaluation metrics from all hospitals."""
+        """Aggregate evaluation metrics."""
 
         aggregated = super().aggregate_evaluate(
             server_round,
@@ -40,10 +56,22 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             failures,
         )
 
+        loss = None
+
         if aggregated[0] is not None:
+            loss = float(aggregated[0])
+
             print(
                 f"[Round {server_round}] "
-                f"Global evaluation loss: {aggregated[0]:.4f}"
+                f"Global evaluation loss: {loss:.4f}"
             )
+
+        record_round(
+            round_number=server_round,
+            loss=loss,
+        )
+
+        if server_round >= 3:
+            set_training_status("completed")
 
         return aggregated
