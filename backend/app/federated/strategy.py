@@ -7,6 +7,16 @@ from app.federated.metrics import (
 )
 
 
+def fit_config(server_round: int) -> dict[str, int]:
+    """Send the current federated round to every client."""
+    return {"server_round": server_round}
+
+
+def evaluate_config(server_round: int) -> dict[str, int]:
+    """Send the current federated round to every client."""
+    return {"server_round": server_round}
+
+
 class FedMedStrategy(fl.server.strategy.FedAvg):
     """FedAvg strategy used by the FedMed federated learning server."""
 
@@ -17,6 +27,8 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             min_fit_clients=3,
             min_evaluate_clients=3,
             min_available_clients=3,
+            on_fit_config_fn=fit_config,
+            on_evaluate_config_fn=evaluate_config,
         )
 
     def aggregate_fit(self, server_round, results, failures):
@@ -24,13 +36,14 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
 
         set_training_status("training")
 
-        for client, _ in results:
-            hospital_id = client.cid
+        for _, fit_res in results:
+            hospital_id = fit_res.metrics.get("hospital_id")
 
-            set_hospital_status(
-                hospital_id,
-                "trained",
-            )
+            if hospital_id:
+                set_hospital_status(
+                    str(hospital_id),
+                    "trained",
+                )
 
         aggregated = super().aggregate_fit(
             server_round,
