@@ -107,3 +107,4 @@ def record_round(round_number: int, loss: float | None) -> None:
             state["status"] = "completed"
 
         _write_state(state)
+get_training_state = get_training_status
