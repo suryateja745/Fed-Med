@@ -1,0 +1,27 @@
+{
+  "status": "completed",
+  "current_round": 3,
+  "total_rounds": 3,
+  "hospitals": {
+    "hospital-1": "trained",
+    "hospital-2": "trained",
+    "hospital-3": "disconnected"
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "status": "completed",
+      "loss": 0.5
+    },
+    {
+      "round": 2,
+      "status": "completed",
+      "loss": 0.5
+    },
+    {
+      "round": 3,
+      "status": "completed",
+      "loss": 0.5
+    }
+  ]
+}
