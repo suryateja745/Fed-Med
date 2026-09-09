@@ -5,7 +5,7 @@
   "hospitals": {
     "hospital-1": "trained",
     "hospital-2": "trained",
-    "hospital-3": "disconnected"
+    "hospital-3": "trained"
   },
   "rounds": [
     {
