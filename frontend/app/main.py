@@ -210,59 +210,70 @@ with col2:
 with col3:
     st.metric("Aggregation", "FedAvg")
 
-
 st.markdown("### Training Progress")
 
-if rounds_data:
-    for round_number in range(1, int(total_rounds) + 1):
-        round_info = rounds_data.get(str(round_number))
 
-        if round_info is None:
-            round_info = rounds_data.get(round_number)
+def get_round_info(rounds_data, round_number):
+    """Return the requested round from either a list or dictionary."""
 
-        if isinstance(round_info, dict):
-            round_status = round_info.get("status", "Pending")
-            loss = round_info.get("loss")
+    if isinstance(rounds_data, list):
+        for item in rounds_data:
+            if isinstance(item, dict):
+                try:
+                    item_round = int(item.get("round", -1))
+                except (TypeError, ValueError):
+                    item_round = -1
 
-            if loss is not None:
-                st.write(
-                    f"**Round {round_number}** — "
-                    f"{round_status} | Loss: {loss}"
-                )
-            else:
-                st.write(
-                    f"**Round {round_number}** — {round_status}"
-                )
-        elif isinstance(round_info, str):
+                if item_round == round_number:
+                    return item
+
+        return None
+
+    if isinstance(rounds_data, dict):
+        return rounds_data.get(str(round_number)) or rounds_data.get(
+            round_number
+        )
+
+    return None
+
+
+for round_number in range(1, int(total_rounds) + 1):
+    round_info = get_round_info(rounds_data, round_number)
+
+    if isinstance(round_info, dict):
+        round_status = round_info.get("status", "Pending")
+        loss = round_info.get("loss")
+
+        if loss is not None:
             st.write(
-                f"**Round {round_number}** — {round_info}"
+                f"**Round {round_number}** — "
+                f"{round_status} | Loss: {loss}"
             )
         else:
-            if round_number < int(current_round):
-                status = "Completed"
-            elif round_number == int(current_round):
-                status = "Running"
-            else:
-                status = "Pending"
-
             st.write(
-                f"**Round {round_number}** — {status}"
+                f"**Round {round_number}** — {round_status}"
             )
-else:
-    for round_number in range(1, int(total_rounds) + 1):
+
+    elif isinstance(round_info, str):
+        st.write(
+            f"**Round {round_number}** — {round_info}"
+        )
+
+    else:
         if round_number < int(current_round):
             status = "Completed"
-        elif round_number == int(current_round) and int(current_round) > 0:
+        elif (
+            round_number == int(current_round)
+            and int(current_round) > 0
+        ):
             status = "Running"
         else:
             status = "Pending"
 
-        st.write(f"**Round {round_number}** — {status}")
+        st.write(
+            f"**Round {round_number}** — {status}"
+        )
 
-
-# -------------------------------------------------------------------
-# Final training message
-# -------------------------------------------------------------------
 
 if str(training_status).lower() in {"completed", "complete", "success"}:
     st.success(
