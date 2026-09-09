@@ -69,6 +69,13 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Minimum number of hospital clients required for validation evaluation",
     )
     parser.add_argument(
+        "--strategy",
+        type=str,
+        default="FedMedStrategy",
+        choices=["FedMedStrategy", "FedAvg"],
+        help="Aggregation strategy to use for federated rounds",
+    )
+    parser.add_argument(
         "--config",
         type=str,
         default=None,
@@ -99,6 +106,7 @@ def main(args: Optional[List[str]] = None) -> int:
 
     # Apply CLI overrides to configuration
     fed_cfg = config.setdefault("federation", {})
+    strat_cfg = config.setdefault("strategy", {})
     if parsed_args.server_address is not None:
         fed_cfg["server_address"] = parsed_args.server_address
     if parsed_args.num_rounds is not None:
@@ -109,18 +117,22 @@ def main(args: Optional[List[str]] = None) -> int:
         fed_cfg["min_available_clients"] = parsed_args.min_available_clients
     if parsed_args.min_evaluate_clients is not None:
         fed_cfg["min_evaluate_clients"] = parsed_args.min_evaluate_clients
+    if parsed_args.strategy is not None:
+        strat_cfg["name"] = parsed_args.strategy
 
     # Step 2: System Telemetry
     server_address = fed_cfg.get("server_address", "0.0.0.0:8080")
     num_rounds = fed_cfg.get("num_rounds", 10)
     min_fit = fed_cfg.get("min_fit_clients", 2)
     min_avail = fed_cfg.get("min_available_clients", 2)
+    strat_name = strat_cfg.get("name", "FedMedStrategy")
 
     logger.info("Server Environment & Configuration:")
     logger.info(f"  * Platform OS      : {platform.system()} {platform.release()}")
     logger.info(f"  * Python Version   : {platform.python_version()}")
     logger.info(f"  * PyTorch Version  : {torch.__version__}")
     logger.info(f"  * Server Address   : {server_address}")
+    logger.info(f"  * Aggregation Strat: {strat_name}")
     logger.info(f"  * Total Rounds     : {num_rounds}")
     logger.info(f"  * Min Fit Clients  : {min_fit}")
     logger.info(f"  * Min Avail Clients: {min_avail}")
@@ -133,14 +145,26 @@ def main(args: Optional[List[str]] = None) -> int:
     )
 
     # Step 4: Strategy Construction
-    strategy = create_fedavg_strategy(
-        model=model,
-        config=config,
-        min_fit_clients=min_fit,
-        min_available_clients=min_avail,
-        min_evaluate_clients=fed_cfg.get("min_evaluate_clients", 2),
-    )
-    logger.info("FedAvg aggregation strategy successfully initialized.")
+    if "fedavg" in strat_name.lower():
+        strategy = create_fedavg_strategy(
+            model=model,
+            config=config,
+            min_fit_clients=min_fit,
+            min_available_clients=min_avail,
+            min_evaluate_clients=fed_cfg.get("min_evaluate_clients", 2),
+        )
+        logger.info("Standard FedAvg aggregation strategy successfully initialized.")
+    else:
+        from federation.server.strategy import create_fedmed_strategy
+        strategy = create_fedmed_strategy(
+            model=model,
+            config=config,
+            min_fit_clients=min_fit,
+            min_available_clients=min_avail,
+            min_evaluate_clients=fed_cfg.get("min_evaluate_clients", 2),
+            weighted_by_dice=strat_cfg.get("weighted_by_samples", True),
+        )
+        logger.info("Custom FedMedStrategy with Dice-weighted aggregation successfully initialized.")
 
     # Step 5: Dry-Run Mode
     if parsed_args.dry_run:
