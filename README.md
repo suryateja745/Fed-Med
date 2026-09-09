@@ -876,3 +876,9 @@ React Dashboard
 **A privacy-first approach to collaborative healthcare AI.**
 
 ---
+
+### Milestone
+- Global federated training progress dashboard
+- Federated round history
+- Persisted training-round display
+- FedAvg training status visualization
