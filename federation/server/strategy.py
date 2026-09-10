@@ -72,6 +72,7 @@ from federation.server.fl_server import (
     get_fit_config_fn,
     get_initial_parameters,
 )
+from federation.server.model_manager import GlobalModelManager
 from federation.utils.config_loader import load_config
 from federation.utils.logger import setup_logger
 
@@ -289,6 +290,7 @@ class FedMedStrategy(FedAvg):
         evaluate_fn: Optional[Callable] = None,
         on_fit_config_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
+        model_manager: Optional[GlobalModelManager] = None,
     ) -> None:
         if config is None:
             config = load_config()
@@ -300,6 +302,18 @@ class FedMedStrategy(FedAvg):
 
         self.round_history: List[Dict[str, Any]] = []
         self.best_global_dice: float = -1.0
+
+        # Initialize Global Model Manager
+        if model_manager is not None:
+            self.model_manager = model_manager
+        else:
+            ckpt_dir = self.config.get("storage", {}).get("checkpoint_dir", "./checkpoints")
+            self.model_manager = GlobalModelManager(
+                checkpoint_dir=ckpt_dir,
+                model=self.model,
+                config=self.config,
+                export_best=self.config.get("storage", {}).get("export_best_model", True),
+            )
 
         fed_cfg = config.get("federation", {})
         initial_params = get_initial_parameters(model=model, config=config)
@@ -348,11 +362,15 @@ class FedMedStrategy(FedAvg):
         # Extract parameters, sample counts, and metrics
         weights_results: List[Tuple[List[np.ndarray], float]] = []
         client_metrics_list: List[Tuple[int, Dict[str, Any]]] = []
+        participating_clients: List[str] = []
 
-        for client, fit_res in results:
+        for idx, (client, fit_res) in enumerate(results):
             params = parameters_to_ndarrays(fit_res.parameters) if hasattr(fit_res, "parameters") else []
             num_samples = fit_res.num_examples if hasattr(fit_res, "num_examples") else 1
             metrics = fit_res.metrics if hasattr(fit_res, "metrics") else {}
+
+            client_id = str(metrics.get("hospital_id", getattr(client, "cid", f"client_{idx}")))
+            participating_clients.append(client_id)
 
             # Calculate client aggregation weight
             if self.weighted_by_dice:
@@ -372,6 +390,19 @@ class FedMedStrategy(FedAvg):
         # Aggregate training metrics
         aggregated_metrics = aggregate_fit_metrics(client_metrics_list)
         aggregated_metrics["server_round"] = server_round
+        aggregated_metrics["participating_clients"] = participating_clients
+
+        # Automatically save global checkpoint and update registry
+        if self.model_manager is not None:
+            try:
+                self.model_manager.save_round_checkpoint(
+                    round_num=server_round,
+                    parameters=aggregated_ndarrays,
+                    metrics=aggregated_metrics,
+                    participating_clients=participating_clients,
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to save global round checkpoint: {e}")
 
         self.logger.info(
             f"[Round {server_round}] Aggregated {len(results)} clients "
@@ -420,6 +451,16 @@ class FedMedStrategy(FedAvg):
                 f"[Round {server_round}] New global best Dice score: {prev_best:.4f} -> {current_dice:.4f}"
             )
 
+        # Update metadata registry with evaluation metrics
+        if self.model_manager is not None:
+            try:
+                self.model_manager.update_evaluation_metrics(
+                    round_num=server_round,
+                    metrics=aggregated_metrics,
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to update evaluation metrics in registry: {e}")
+
         self.logger.info(
             f"[Round {server_round} Evaluation] Loss: {avg_loss:.4f}, "
             f"Dice Mean: {current_dice:.4f} "
@@ -438,6 +479,7 @@ def create_fedmed_strategy(
     config: Optional[Dict[str, Any]] = None,
     weighted_by_dice: bool = True,
     val_loader: Optional[DataLoader] = None,
+    model_manager: Optional[GlobalModelManager] = None,
     device: str = "cpu",
     **kwargs: Any,
 ) -> FedMedStrategy:
@@ -464,5 +506,6 @@ def create_fedmed_strategy(
         config=config,
         weighted_by_dice=weighted_by_dice,
         evaluate_fn=eval_fn,
+        model_manager=model_manager,
         **kwargs,
     )

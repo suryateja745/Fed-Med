@@ -9,6 +9,7 @@ from federation.server.fl_server import (
     get_initial_parameters,
     start_flower_server,
 )
+from federation.server.model_manager import GlobalModelManager
 from federation.server.run_server import (
     main as run_server_main,
     parse_args as parse_server_args,
@@ -36,4 +37,6 @@ __all__ = [
     "aggregate_fit_metrics",
     "aggregate_evaluate_metrics",
     "get_server_eval_fn",
+    "GlobalModelManager",
 ]
+
