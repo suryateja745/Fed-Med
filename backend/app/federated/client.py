@@ -6,6 +6,8 @@ from typing import Any
 import flwr as fl
 import numpy as np
 
+from app.federated.secure_aggregation import encrypt_update
+
 
 class HospitalClient(fl.client.NumPyClient):
     """Mock Flower client representing one hospital."""
@@ -18,16 +20,14 @@ class HospitalClient(fl.client.NumPyClient):
     ) -> None:
         self.hospital_id = hospital_id
 
-        # Mock model parameters.
+        # Local mock model state.
         self.parameters = [
             np.array([0.0], dtype=np.float32)
         ]
 
-        # Failure/retry configuration.
-        self.fail = fail
+        self.fail = bool(fail)
         self.retry_limit = max(0, int(retry_count))
 
-        # Runtime counters.
         self.retry_count = 0
         self.failed_rounds: list[int] = []
 
@@ -35,8 +35,6 @@ class HospitalClient(fl.client.NumPyClient):
         self,
         config: dict[str, Any],
     ) -> dict[str, Any]:
-        """Return hospital metadata to the Flower server."""
-
         return {
             "hospital_id": self.hospital_id,
             "node_type": "hospital",
@@ -48,10 +46,7 @@ class HospitalClient(fl.client.NumPyClient):
         self,
         config: dict[str, Any],
     ):
-        """Return the current global/model parameters."""
-
         print(f"[{self.hospital_id}] get_parameters")
-
         return self.parameters
 
     def fit(
@@ -59,19 +54,18 @@ class HospitalClient(fl.client.NumPyClient):
         parameters,
         config: dict[str, Any],
     ):
-        """Perform mock local training for one federated round."""
+        """Perform local training, then encrypt the update."""
 
-        server_round = int(config.get("server_round", 0))
+        server_round = int(
+            config.get("server_round", 0)
+        )
 
         print(
             f"[{self.hospital_id}] "
             f"training round {server_round}"
         )
 
-        # Permanent failure mode.
-        #
-        # This is useful for demonstrating that the Flower server
-        # can continue with the remaining hospitals.
+        # Permanent failure simulation.
         if self.fail:
             print(
                 f"[{self.hospital_id}] "
@@ -79,11 +73,10 @@ class HospitalClient(fl.client.NumPyClient):
                 f"in round {server_round}"
             )
 
-            self.failed_rounds.append(server_round)
+            self.failed_rounds.append(
+                server_round
+            )
 
-            # A small delay allows the server round timeout to
-            # demonstrate real failure handling without waiting
-            # indefinitely.
             time.sleep(2)
 
             raise RuntimeError(
@@ -91,10 +84,7 @@ class HospitalClient(fl.client.NumPyClient):
                 f"during round {server_round}"
             )
 
-        # Optional client-side retry simulation.
-        #
-        # This models a temporary local failure followed by a
-        # successful retry.
+        # Temporary retry simulation.
         if (
             self.retry_limit > 0
             and self.retry_count < self.retry_limit
@@ -109,7 +99,6 @@ class HospitalClient(fl.client.NumPyClient):
                 f"{self.retry_limit}"
             )
 
-            # Simulate a short recovery interval.
             time.sleep(1)
 
             print(
@@ -118,26 +107,55 @@ class HospitalClient(fl.client.NumPyClient):
                 f"{server_round}"
             )
 
-        # Mock local model update.
+        # ---------------------------------------------------------
+        # Mock local training
+        # ---------------------------------------------------------
         updated_parameters = [
-            np.asarray(parameters[0]) + 0.1
+            np.asarray(
+                parameters[0],
+                dtype=np.float32,
+            ) + 0.1
         ]
 
+        # Plaintext remains local to the hospital.
         self.parameters = updated_parameters
+
+        # ---------------------------------------------------------
+        # Encrypt before sending to Flower
+        # ---------------------------------------------------------
+        encrypted_parameters = []
+
+        for parameter in updated_parameters:
+            encrypted_bytes = encrypt_update(
+                parameter
+            )
+
+            encrypted_parameters.append(
+                np.frombuffer(
+                    encrypted_bytes,
+                    dtype=np.uint8,
+                )
+            )
 
         print(
             f"[{self.hospital_id}] "
             f"round {server_round} training completed"
         )
 
+        print(
+            f"[{self.hospital_id}] "
+            f"update encrypted with TenSEAL CKKS"
+        )
+
         return (
-            updated_parameters,
+            encrypted_parameters,
             1,
             {
                 "hospital_id": self.hospital_id,
-                "status": "trained",
+                "status": "encrypted",
                 "round": server_round,
                 "retry_count": self.retry_count,
+                "encryption": "TenSEAL-CKKS",
             },
         )
 
@@ -148,7 +166,9 @@ class HospitalClient(fl.client.NumPyClient):
     ):
         """Evaluate the current global model."""
 
-        server_round = int(config.get("server_round", 0))
+        server_round = int(
+            config.get("server_round", 0)
+        )
 
         print(
             f"[{self.hospital_id}] "
