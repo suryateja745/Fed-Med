@@ -3,11 +3,22 @@ from __future__ import annotations
 from typing import Any
 
 import flwr as fl
+import numpy as np
+
+from flwr.common import (
+    ndarrays_to_parameters,
+    parameters_to_ndarrays,
+)
 
 from app.federated.metrics import (
     record_round,
+    record_security_updates,
     set_hospital_status,
     set_training_status,
+)
+
+from app.federated.secure_aggregation import (
+    aggregate_encrypted_updates,
 )
 
 
@@ -18,34 +29,34 @@ KNOWN_HOSPITALS = {
 }
 
 
-def fit_config(server_round: int) -> dict[str, int]:
-    """Send the current federated round to each client."""
+def fit_config(
+    server_round: int,
+) -> dict[str, int]:
     return {
         "server_round": server_round,
     }
 
 
-def evaluate_config(server_round: int) -> dict[str, int]:
-    """Send the current federated round to each client."""
+def evaluate_config(
+    server_round: int,
+) -> dict[str, int]:
     return {
         "server_round": server_round,
     }
 
 
-class FedMedStrategy(fl.server.strategy.FedAvg):
-    """FedMed FedAvg strategy with node failure handling."""
+class FedMedStrategy(
+    fl.server.strategy.FedAvg
+):
+    """FedMed federated strategy."""
 
     def __init__(self) -> None:
         super().__init__(
             fraction_fit=1.0,
             fraction_evaluate=1.0,
-
-            # Three hospitals exist, but two successful clients
-            # are enough to complete a round.
             min_fit_clients=2,
             min_evaluate_clients=2,
             min_available_clients=3,
-
             on_fit_config_fn=fit_config,
             on_evaluate_config_fn=evaluate_config,
         )
@@ -56,11 +67,12 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         results,
         failures,
     ):
-        """Aggregate successful updates and record failed nodes."""
+        """Aggregate TenSEAL-encrypted client updates."""
 
         print(
             f"[Round {server_round}] "
-            f"Received {len(results)} successful fit result(s)"
+            f"Received {len(results)} "
+            f"successful fit result(s)"
         )
 
         print(
@@ -84,7 +96,9 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
             )
 
             if hospital_id:
-                hospital_id = str(hospital_id)
+                hospital_id = str(
+                    hospital_id
+                )
 
                 successful_hospitals.add(
                     hospital_id
@@ -98,27 +112,20 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
 
                 print(
                     f"[Round {server_round}] "
-                    f"{hospital_id} → trained"
+                    f"{hospital_id} -> trained"
                 )
 
         # ---------------------------------------------------------
         # Failed hospitals
-        #
-        # Flower can return failures in different forms:
-        #
-        #   (ClientProxy, failure)
-        #
-        # OR a direct exception such as GrpcBridgeClosed.
         # ---------------------------------------------------------
         failed_hospitals: set[str] = set()
 
         for failure in failures:
-
             if (
                 isinstance(failure, tuple)
                 and len(failure) == 2
             ):
-                failed_client, failure_detail = (
+                failed_client, detail = (
                     failure
                 )
 
@@ -135,20 +142,15 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
 
                 print(
                     f"[Round {server_round}] "
-                    f"Client failure: "
-                    f"{failure_detail}"
+                    f"Client failure: {detail}"
                 )
-
             else:
                 print(
                     f"[Round {server_round}] "
                     f"Client failure: {failure}"
                 )
 
-        # ---------------------------------------------------------
-        # Infer the missing hospital when all 3 clients were
-        # selected but only 2 returned results.
-        # ---------------------------------------------------------
+        # Infer missing hospital if necessary.
         if (
             len(results) + len(failures)
             >= len(KNOWN_HOSPITALS)
@@ -162,9 +164,7 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 missing_hospitals
             )
 
-        # ---------------------------------------------------------
-        # Persist failure/timeout state
-        # ---------------------------------------------------------
+        # Persist failures.
         for hospital_id in sorted(
             failed_hospitals
         ):
@@ -176,35 +176,106 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
 
             print(
                 f"[Round {server_round}] "
-                f"{hospital_id} → timeout/failure"
+                f"{hospital_id} -> timeout/failure"
             )
 
         # ---------------------------------------------------------
-        # Normal FedAvg aggregation
+        # Secure aggregation
         # ---------------------------------------------------------
-        aggregated = super().aggregate_fit(
-            server_round,
-            results,
-            failures,
-        )
-
-        if aggregated is None:
+        if not results:
             print(
                 f"[Round {server_round}] "
-                f"FedAvg aggregation returned no result"
+                f"No successful encrypted updates"
             )
-
             return None
 
-        parameters, metrics = aggregated
+        encrypted_updates: list[bytes] = []
+
+        for _, fit_res in results:
+            arrays = parameters_to_ndarrays(
+                fit_res.parameters
+            )
+
+            for array in arrays:
+                encrypted_updates.append(
+                    np.asarray(
+                        array,
+                        dtype=np.uint8,
+                    ).tobytes()
+                )
 
         print(
             f"[Round {server_round}] "
-            f"FedAvg aggregation completed with "
-            f"{len(results)} successful client(s)"
+            f"Received {len(encrypted_updates)} "
+            f"encrypted update(s)"
         )
 
-        return parameters, metrics
+        print(
+            f"[Round {server_round}] "
+            f"Performing TenSEAL CKKS secure aggregation"
+        )
+
+        try:
+            encrypted_sum = (
+                aggregate_encrypted_updates(
+                    encrypted_updates
+                )
+            )
+        except Exception as exc:
+            print(
+                f"[Round {server_round}] "
+                f"Encrypted aggregation failed: {exc}"
+            )
+            set_training_status(
+                "error",
+                server_round,
+            )
+            return None
+
+        # Convert encrypted aggregate sum to FedAvg mean.
+        aggregate_sum = np.asarray(
+            encrypted_sum,
+            dtype=np.float32,
+        )
+
+        aggregate_mean = (
+            aggregate_sum / len(results)
+        )
+
+        aggregated_parameters = (
+            ndarrays_to_parameters(
+                [aggregate_mean]
+            )
+        )
+
+        record_security_updates(
+            len(encrypted_updates)
+        )
+
+        aggregation_metrics = {
+            "encrypted_updates": len(
+                encrypted_updates
+            ),
+            "secure_aggregation": True,
+            "encryption": "TenSEAL-CKKS",
+            "plaintext_updates_exposed": False,
+        }
+
+        print(
+            f"[Round {server_round}] "
+            f"TenSEAL secure aggregation completed"
+        )
+
+        print(
+            f"[Round {server_round}] "
+            f"FedAvg mean computed from "
+            f"{len(results)} client(s)"
+        )
+
+        return (
+            aggregated_parameters,
+            aggregation_metrics,
+        )
 
     def aggregate_evaluate(
         self,
@@ -212,22 +283,24 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
         results,
         failures,
     ):
-        """Aggregate evaluations and save round metrics."""
-
         print(
             f"[Round {server_round}] "
-            f"Received {len(results)} evaluation result(s)"
+            f"Received {len(results)} "
+            f"evaluation result(s)"
         )
 
         print(
             f"[Round {server_round}] "
-            f"Received {len(failures)} evaluation failure(s)"
+            f"Received {len(failures)} "
+            f"evaluation failure(s)"
         )
 
-        aggregated = super().aggregate_evaluate(
-            server_round,
-            results,
-            failures,
+        aggregated = (
+            super().aggregate_evaluate(
+                server_round,
+                results,
+                failures,
+            )
         )
 
         if aggregated is None:
@@ -235,7 +308,6 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
                 f"[Round {server_round}] "
                 f"No aggregated evaluation result"
             )
-
             return None
 
         loss, metrics = aggregated
@@ -260,7 +332,8 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
 
         print(
             f"[Round {server_round}] "
-            f"Evaluation loss: {float(loss):.4f}"
+            f"Evaluation loss: "
+            f"{float(loss):.4f}"
         )
 
         return aggregated
@@ -269,8 +342,6 @@ class FedMedStrategy(fl.server.strategy.FedAvg):
     def _extract_hospital_id(
         client_proxy: Any,
     ) -> str | None:
-        """Try to obtain hospital ID from a Flower client proxy."""
-
         for attribute in (
             "cid",
             "node_id",

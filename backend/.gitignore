@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 .vscode/
 .idea/
+data/tenseal_secret_context.bin
+data/tenseal_public_context.bin

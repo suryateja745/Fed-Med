@@ -6,10 +6,13 @@ from typing import Any
 
 
 DATA_DIR = (
-    Path(__file__).resolve().parents[2] / "data"
+    Path(__file__).resolve().parents[2]
+    / "data"
 )
 
-STATE_FILE = DATA_DIR / "training_status.json"
+STATE_FILE = (
+    DATA_DIR / "training_status.json"
+)
 
 DEFAULT_TOTAL_ROUNDS = 3
 
@@ -18,6 +21,16 @@ DEFAULT_HOSPITALS = {
     "hospital-2": "disconnected",
     "hospital-3": "disconnected",
 }
+
+
+def _default_security() -> dict[str, Any]:
+    return {
+        "encryption": "TenSEAL CKKS",
+        "encryption_enabled": True,
+        "secure_aggregation": True,
+        "encrypted_updates": 0,
+        "plaintext_updates_exposed": False,
+    }
 
 
 def _default_state() -> dict[str, Any]:
@@ -33,6 +46,7 @@ def _default_state() -> dict[str, Any]:
         },
         "failures": [],
         "rounds": [],
+        "security": _default_security(),
     }
 
 
@@ -57,29 +71,33 @@ def _read_state() -> dict[str, Any]:
             encoding="utf-8",
         ) as file:
             state = json.load(file)
+
     except (
         json.JSONDecodeError,
         OSError,
     ):
         state = _default_state()
 
-    # Backward compatibility with the 08/09 JSON.
     state.setdefault(
         "status",
         "idle",
     )
+
     state.setdefault(
         "current_round",
         0,
     )
+
     state.setdefault(
         "total_rounds",
         DEFAULT_TOTAL_ROUNDS,
     )
+
     state.setdefault(
         "hospitals",
         DEFAULT_HOSPITALS.copy(),
     )
+
     state.setdefault(
         "retries",
         {
@@ -88,13 +106,20 @@ def _read_state() -> dict[str, Any]:
             "hospital-3": 0,
         },
     )
+
     state.setdefault(
         "failures",
         [],
     )
+
     state.setdefault(
         "rounds",
         [],
+    )
+
+    state.setdefault(
+        "security",
+        _default_security(),
     )
 
     return state
@@ -105,8 +130,8 @@ def _write_state(
 ) -> None:
     _ensure_data_dir()
 
-    temporary_file = STATE_FILE.with_suffix(
-        ".tmp"
+    temporary_file = (
+        STATE_FILE.with_suffix(".tmp")
     )
 
     with temporary_file.open(
@@ -119,31 +144,34 @@ def _write_state(
             indent=2,
         )
 
-    temporary_file.replace(STATE_FILE)
+    temporary_file.replace(
+        STATE_FILE
+    )
 
 
 def reset_training_state() -> None:
-    """Reset the persisted FL training state."""
+    """Reset FL runtime state."""
 
-    _write_state(_default_state())
+    _write_state(
+        _default_state()
+    )
 
 
 def get_training_status() -> dict[str, Any]:
-    """Return current persisted FL training state."""
+    """Return current FL status."""
 
     return _read_state()
 
 
-# Compatibility alias used by older code.
-get_training_state = get_training_status
+get_training_state = (
+    get_training_status
+)
 
 
 def set_training_status(
     status: str,
     current_round: int | None = None,
 ) -> None:
-    """Update global training status."""
-
     state = _read_state()
 
     state["status"] = status
@@ -161,8 +189,6 @@ def set_hospital_status(
     status: str,
     round_number: int | None = None,
 ) -> None:
-    """Update a hospital's current status."""
-
     state = _read_state()
 
     hospitals = state.setdefault(
@@ -170,20 +196,19 @@ def set_hospital_status(
         {},
     )
 
-    # Preserve the old frontend-compatible format:
-    #
-    # "hospital-1": "trained"
-    #
     hospitals[hospital_id] = status
 
     if round_number is not None:
         state["current_round"] = max(
-            int(state.get("current_round", 0)),
+            int(
+                state.get(
+                    "current_round",
+                    0,
+                )
+            ),
             int(round_number),
         )
 
-    # A successful training event does not clear historical
-    # retry information.
     if status == "timeout":
         retries = state.setdefault(
             "retries",
@@ -191,7 +216,12 @@ def set_hospital_status(
         )
 
         retries[hospital_id] = (
-            int(retries.get(hospital_id, 0))
+            int(
+                retries.get(
+                    hospital_id,
+                    0,
+                )
+            )
             + 1
         )
 
@@ -200,16 +230,57 @@ def set_hospital_status(
             [],
         )
 
-        failure_record = {
-            "hospital_id": hospital_id,
-            "round": round_number,
-            "status": "timeout",
-            "retry_count": retries[hospital_id],
-        }
-
         failures.append(
-            failure_record
+            {
+                "hospital_id": hospital_id,
+                "round": round_number,
+                "status": "timeout",
+                "retry_count": retries[
+                    hospital_id
+                ],
+            }
         )
+
+    _write_state(state)
+
+
+def record_security_updates(
+    encrypted_updates: int,
+) -> None:
+    state = _read_state()
+
+    security = state.setdefault(
+        "security",
+        _default_security(),
+    )
+
+    security["encryption"] = (
+        "TenSEAL CKKS"
+    )
+
+    security[
+        "encryption_enabled"
+    ] = True
+
+    security[
+        "secure_aggregation"
+    ] = True
+
+    security[
+        "encrypted_updates"
+    ] = (
+        int(
+            security.get(
+                "encrypted_updates",
+                0,
+            )
+        )
+        + int(encrypted_updates)
+    )
+
+    security[
+        "plaintext_updates_exposed"
+    ] = False
 
     _write_state(state)
 
@@ -219,8 +290,6 @@ def record_round(
     loss: float,
     status: str = "completed",
 ) -> None:
-    """Persist metrics for one federated round."""
-
     state = _read_state()
 
     rounds = state.setdefault(
@@ -228,7 +297,9 @@ def record_round(
         [],
     )
 
-    round_number = int(round_number)
+    round_number = int(
+        round_number
+    )
 
     round_record = {
         "round": round_number,
@@ -236,29 +307,48 @@ def record_round(
         "loss": float(loss),
     }
 
-    # Update an existing round rather than duplicating it.
     existing_index = None
 
-    for index, item in enumerate(rounds):
-        if int(
-            item.get("round", -1)
-        ) == round_number:
+    for index, item in enumerate(
+        rounds
+    ):
+        if (
+            int(
+                item.get(
+                    "round",
+                    -1,
+                )
+            )
+            == round_number
+        ):
             existing_index = index
             break
 
     if existing_index is None:
-        rounds.append(round_record)
+        rounds.append(
+            round_record
+        )
     else:
-        rounds[existing_index] = round_record
+        rounds[existing_index] = (
+            round_record
+        )
 
     rounds.sort(
         key=lambda item: int(
-            item.get("round", 0)
+            item.get(
+                "round",
+                0,
+            )
         )
     )
 
     state["current_round"] = max(
-        int(state.get("current_round", 0)),
+        int(
+            state.get(
+                "current_round",
+                0,
+            )
+        ),
         round_number,
     )
 
