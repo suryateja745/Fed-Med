@@ -22,6 +22,11 @@ from federation.server.strategy import (
     create_fedmed_strategy,
     get_server_eval_fn,
 )
+from federation.server.sync_manager import (
+    PendingClientUpdate,
+    RoundSyncManager,
+    StalePolicy,
+)
 
 __all__ = [
     "create_fedavg_strategy",
@@ -38,5 +43,9 @@ __all__ = [
     "aggregate_evaluate_metrics",
     "get_server_eval_fn",
     "GlobalModelManager",
+    "RoundSyncManager",
+    "PendingClientUpdate",
+    "StalePolicy",
 ]
+
 
