@@ -27,6 +27,10 @@ from federation.server.sync_manager import (
     RoundSyncManager,
     StalePolicy,
 )
+from federation.server.triggers import (
+    AutoDispatchTrigger,
+    DispatchAuditEvent,
+)
 
 __all__ = [
     "create_fedavg_strategy",
@@ -46,6 +50,9 @@ __all__ = [
     "RoundSyncManager",
     "PendingClientUpdate",
     "StalePolicy",
+    "AutoDispatchTrigger",
+    "DispatchAuditEvent",
 ]
+
 
 
