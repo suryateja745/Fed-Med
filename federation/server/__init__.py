@@ -28,8 +28,10 @@ from federation.server.sync_manager import (
     StalePolicy,
 )
 from federation.server.triggers import (
+    AutoAggregateTrigger,
     AutoDispatchTrigger,
     DispatchAuditEvent,
+    RoundCompleteEvent,
 )
 
 __all__ = [
@@ -52,7 +54,10 @@ __all__ = [
     "StalePolicy",
     "AutoDispatchTrigger",
     "DispatchAuditEvent",
+    "AutoAggregateTrigger",
+    "RoundCompleteEvent",
 ]
+
 
 
 

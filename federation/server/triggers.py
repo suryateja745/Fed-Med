@@ -3,6 +3,9 @@ Automated Triggers and Dispatch Daemons for FedMed Server Coordinator.
 Implements:
 - AutoDispatchTrigger: Automatically serves the latest/best global preset model weights
   to connecting hospital clients in unattended/offline admin mode and records an audit log.
+- AutoAggregateTrigger: Automatically executes federated parameter aggregation (FedMedStrategy/FedAvg),
+  updates global model checkpoints, increments the round counter, and notifies subscribers upon
+  reaching the client upload threshold.
 """
 
 from dataclasses import asdict, dataclass, field
@@ -10,6 +13,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
@@ -24,11 +28,23 @@ from federation.models.unet3d import (
     build_unet3d_from_config,
     get_model_parameters,
     load_model_checkpoint,
+    set_model_parameters,
 )
 from federation.server.model_manager import GlobalModelManager
+from federation.server.strategy import (
+    ClientProxy,
+    FedMedStrategy,
+    FitRes,
+    aggregate_weighted_parameters,
+    ndarrays_to_parameters,
+    parameters_to_ndarrays,
+)
+from federation.server.sync_manager import PendingClientUpdate, RoundSyncManager
 from federation.utils.config_loader import load_config
 from federation.utils.logger import setup_logger
 
+
+# Data Structures & Event Models
 
 @dataclass
 class DispatchAuditEvent:
@@ -46,6 +62,24 @@ class DispatchAuditEvent:
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+
+@dataclass
+class RoundCompleteEvent:
+    """Event payload emitted when automated aggregation completes a federated round."""
+    round_num: int
+    participating_clients: List[str]
+    num_samples_total: int
+    metrics: Dict[str, Any]
+    checkpoint_path: str
+    is_new_best: bool
+    duration_seconds: float
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+# AutoDispatchTrigger
 
 class AutoDispatchTrigger:
     """
@@ -196,7 +230,6 @@ class AutoDispatchTrigger:
             None,
         )
 
-
     def _record_audit_log(self, event: DispatchAuditEvent) -> None:
         """Append audit event JSON line to persistent audit log file."""
         try:
@@ -233,4 +266,252 @@ class AutoDispatchTrigger:
             "hospitals_served_breakdown": self._served_hospitals,
             "last_dispatch": history[-1] if history else None,
             "audit_log_path": str(self.audit_log_file),
+        }
+
+
+# AutoAggregateTrigger
+
+class AutoAggregateTrigger:
+    """
+    Automated Parameter Aggregation and Model Publication Trigger.
+
+    Responsibilities:
+    - Listen for hospital client parameter uploads into RoundSyncManager.
+    - Check if upload threshold (min_fit_clients) or timeout is satisfied.
+    - Execute FedMedStrategy.aggregate_fit() to perform weighted averaging.
+    - Update global model weights and save versioned checkpoint (global_model_round_X.pth).
+    - Automatically increment active federated round in RoundSyncManager.
+    - Dispatch RoundCompleteEvent notifications to registered subscribers/callbacks.
+    """
+
+    def __init__(
+        self,
+        sync_manager: RoundSyncManager,
+        strategy: Optional[FedMedStrategy] = None,
+        model_manager: Optional[GlobalModelManager] = None,
+        min_upload_threshold: Optional[int] = None,
+        auto_advance_round: bool = True,
+        audit_log_file: Union[str, Path] = "./logs/aggregation_events.jsonl",
+        on_round_complete_callbacks: Optional[List[Callable[[RoundCompleteEvent], None]]] = None,
+    ) -> None:
+        self.sync_manager = sync_manager
+        self.min_upload_threshold = (
+            min_upload_threshold
+            if min_upload_threshold is not None
+            else self.sync_manager.min_clients_per_round
+        )
+        self.model_manager = model_manager or getattr(strategy, "model_manager", None) or GlobalModelManager()
+        self.strategy = strategy or FedMedStrategy(model_manager=self.model_manager)
+        self.auto_advance_round = auto_advance_round
+
+        self.audit_log_file = Path(audit_log_file)
+        self.audit_log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        self.logger = setup_logger(name="AutoAggregateTrigger")
+        self._callbacks: List[Callable[[RoundCompleteEvent], None]] = list(on_round_complete_callbacks or [])
+        self._completed_events: List[RoundCompleteEvent] = []
+
+    def register_on_round_complete(self, callback: Callable[[RoundCompleteEvent], None]) -> None:
+        """Register an event listener for round completion notifications."""
+        self._callbacks.append(callback)
+
+    def handle_client_upload(
+        self,
+        hospital_id: str,
+        round_num: int,
+        parameters: List[np.ndarray],
+        num_examples: int,
+        metrics: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bool, str, Optional[RoundCompleteEvent]]:
+        """
+        Handle a parameter upload from a hospital client node.
+        Ingests update into synchronization queue and automatically evaluates aggregation trigger.
+
+        Args:
+            hospital_id: Client identifier.
+            round_num: Client training round number.
+            parameters: Trained model weight arrays.
+            num_examples: Training sample count.
+            metrics: Training telemetry dictionary.
+
+        Returns:
+            Tuple of (upload_success: bool, status_message: str, round_event: Optional[RoundCompleteEvent]).
+        """
+        ok, msg = self.sync_manager.submit_update(
+            hospital_id=hospital_id,
+            round_num=round_num,
+            parameters=parameters,
+            num_examples=num_examples,
+            metrics=metrics,
+        )
+        if not ok:
+            return False, msg, None
+
+        # Check if threshold reached
+        triggered, event = self.check_and_trigger(round_num=round_num)
+        return True, msg, event
+
+    def check_and_trigger(
+        self,
+        round_num: Optional[int] = None,
+        force: bool = False,
+    ) -> Tuple[bool, Optional[RoundCompleteEvent]]:
+        """
+        Evaluate whether the current round has enough uploads to execute automated aggregation.
+
+        Args:
+            round_num: Round to evaluate (defaults to sync_manager.current_round).
+            force: If True, executes aggregation regardless of whether min threshold is reached.
+
+        Returns:
+            Tuple of (triggered: bool, event: Optional[RoundCompleteEvent]).
+        """
+        target_round = round_num if round_num is not None else self.sync_manager.current_round
+        ready_updates = self.sync_manager.get_ready_updates(round_num=target_round)
+        upload_count = len(ready_updates)
+
+        if not force and upload_count < self.min_upload_threshold:
+            return False, None
+
+        start_time = time.time()
+        self.logger.info(
+            f"[AutoAggregate] Triggering aggregation for Round {target_round} "
+            f"({upload_count}/{self.min_upload_threshold} hospital updates ready)..."
+        )
+
+        # 1. Package Client Results for Aggregation
+        fit_results = []
+        for upd in ready_updates:
+            proxy = ClientProxy(cid=upd.hospital_id)
+            param_obj = ndarrays_to_parameters(upd.parameters)
+            fit_res = FitRes(
+                parameters=param_obj,
+                num_examples=upd.num_examples,
+                metrics=upd.metrics,
+            )
+            fit_results.append((proxy, fit_res))
+
+        # 2. Execute Strategy Aggregation
+        agg_params_obj, agg_metrics = self.strategy.aggregate_fit(
+            server_round=target_round,
+            results=fit_results,
+            failures=[],
+        )
+
+        # Convert back to NumPy ndarrays
+        if agg_params_obj is not None:
+            aggregated_ndarrays = parameters_to_ndarrays(agg_params_obj)
+        else:
+            # Fallback direct weighted average
+            weighted_inputs = [
+                (upd.parameters, float(upd.num_examples) * (1.0 + float(upd.metrics.get("val_dice_mean", 0.0))))
+                for upd in ready_updates
+            ]
+            aggregated_ndarrays = aggregate_weighted_parameters(weighted_inputs)
+
+        # 3. Update Model State & Checkpoint
+        set_model_parameters(self.model_manager.model, aggregated_ndarrays)
+
+        # Calculate summary metrics
+        total_samples = sum(upd.num_examples for upd in ready_updates)
+        participating_clients = [upd.hospital_id for upd in ready_updates]
+        avg_train_loss = float(np.mean([upd.metrics.get("train_loss", 1.0) for upd in ready_updates]))
+        avg_dice_mean = float(np.mean([upd.metrics.get("val_dice_mean", 0.0) for upd in ready_updates]))
+        avg_dice_tc = float(np.mean([upd.metrics.get("val_dice_tc", 0.0) for upd in ready_updates]))
+        avg_dice_wt = float(np.mean([upd.metrics.get("val_dice_wt", 0.0) for upd in ready_updates]))
+        avg_dice_et = float(np.mean([upd.metrics.get("val_dice_et", 0.0) for upd in ready_updates]))
+
+        round_metrics = {
+            "train_loss": avg_train_loss,
+            "val_dice_mean": avg_dice_mean,
+            "val_dice_tc": avg_dice_tc,
+            "val_dice_wt": avg_dice_wt,
+            "val_dice_et": avg_dice_et,
+            "num_clients": upload_count,
+            **agg_metrics,
+        }
+
+        prev_best = self.model_manager.best_dice
+        latest_ckpt_path = self.model_manager.save_round_checkpoint(
+            round_num=target_round,
+            model=self.model_manager.model,
+            metrics=round_metrics,
+            participating_clients=participating_clients,
+        )
+        is_new_best = self.model_manager.best_dice > prev_best
+
+        elapsed_sec = time.time() - start_time
+
+        # 4. Construct RoundCompleteEvent
+        event = RoundCompleteEvent(
+            round_num=target_round,
+            participating_clients=participating_clients,
+            num_samples_total=total_samples,
+            metrics=round_metrics,
+            checkpoint_path=str(latest_ckpt_path),
+            is_new_best=is_new_best,
+            duration_seconds=round(elapsed_sec, 3),
+        )
+
+        # 5. Advance Round in SyncManager
+        if self.auto_advance_round:
+            self.sync_manager.advance_round(target_round + 1)
+
+        # 6. Record Event & Dispatch Notifications
+        self._record_event(event)
+        self._completed_events.append(event)
+        self._notify_subscribers(event)
+
+        self.logger.info(
+            f"[AutoAggregate] Completed Round {target_round} in {elapsed_sec:.2f}s! "
+            f"Dice Mean={avg_dice_mean:.4f} (New Best: {is_new_best}) -> Saved: {latest_ckpt_path.name}"
+        )
+
+        return True, event
+
+    def _notify_subscribers(self, event: RoundCompleteEvent) -> None:
+        """Dispatch event notifications to all registered callbacks."""
+        for cb in self._callbacks:
+            try:
+                cb(event)
+            except Exception as e:
+                self.logger.error(f"[AutoAggregate] Error in round complete callback: {e}")
+
+    def _record_event(self, event: RoundCompleteEvent) -> None:
+        """Persist aggregation event to JSONL audit log."""
+        try:
+            with open(self.audit_log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(event.to_dict()) + "\n")
+        except Exception as e:
+            self.logger.error(f"[AutoAggregate] Failed to write event log: {e}")
+
+    def get_aggregation_history(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Read and return list of completed round aggregation events from disk."""
+        events: List[Dict[str, Any]] = []
+        if not self.audit_log_file.exists():
+            return events
+
+        try:
+            with open(self.audit_log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        events.append(json.loads(line))
+        except Exception as e:
+            self.logger.error(f"[AutoAggregate] Error reading event log: {e}")
+
+        if limit is not None:
+            return events[-limit:]
+        return events
+
+    def get_trigger_status(self) -> Dict[str, Any]:
+        """Return status telemetry for automated aggregation engine."""
+        history = self.get_aggregation_history()
+        return {
+            "current_round": self.sync_manager.current_round,
+            "min_upload_threshold": self.min_upload_threshold,
+            "pending_uploads_count": len(self.sync_manager.get_ready_updates()),
+            "total_aggregated_rounds": len(history),
+            "latest_event": history[-1] if history else None,
+            "subscribers_count": len(self._callbacks),
         }
