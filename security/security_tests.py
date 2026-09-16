@@ -2,8 +2,8 @@ import torch
 import sys, os
 
 sys.path.append(os.path.dirname(__file__))
-from pytorch_encryption import create_context, encrypt_tensor, decrypt_tensor
-from secure_pipeline import add_noise
+from encryption.pytorch_encryption import create_context, encrypt_tensor, decrypt_tensor
+from encryption.secure_pipeline import add_noise
 
 def test_encryption_hides_data():
     """Confirms encrypted data cannot be read as plain numbers."""

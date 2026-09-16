@@ -3,7 +3,7 @@ import numpy as np
 import sys, os
 
 sys.path.append(os.path.dirname(__file__))
-from pytorch_encryption import create_context, encrypt_tensor, decrypt_tensor
+from encryption.pytorch_encryption import create_context, encrypt_tensor, decrypt_tensor
 
 def add_noise(tensor, epsilon=1.0, sensitivity=1.0):
     scale = sensitivity / epsilon
