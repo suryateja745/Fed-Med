@@ -7,7 +7,7 @@ from app.federated.strategy import FedMedStrategy
 
 SERVER_ADDRESS = "0.0.0.0:8080"
 NUM_ROUNDS = 3
-ROUND_TIMEOUT = 30
+ROUND_TIMEOUT = 120
 
 
 def start_server() -> None:
