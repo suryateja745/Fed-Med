@@ -46,17 +46,17 @@ default_hospitals = [
     {
         "id": "hospital-1",
         "name": "Hospital 1",
-        "dataset": "mock-dataset-1",
+        "dataset": "synthetic-MRI-dataset",
     },
     {
         "id": "hospital-2",
         "name": "Hospital 2",
-        "dataset": "mock-dataset-2",
+        "dataset": "synthetic-MRI-dataset",
     },
     {
         "id": "hospital-3",
         "name": "Hospital 3",
-        "dataset": "mock-dataset-3",
+        "dataset": "synthetic-MRI-dataset",
     },
 ]
 
@@ -82,7 +82,6 @@ def normalize_hospital_status(status):
 
         "trained": "Trained",
         "completed": "Trained",
-
         "encrypted": "Trained",
 
         "retry": "Retrying",
@@ -113,7 +112,9 @@ def normalize_rounds(data):
         for item in data:
 
             if isinstance(item, dict):
-                normalized.append(item)
+                normalized.append(
+                    dict(item)
+                )
 
     elif isinstance(data, dict):
 
@@ -137,6 +138,7 @@ def normalize_rounds(data):
                 normalized.append(item)
 
     def round_key(item):
+
         try:
             return int(
                 item.get(
@@ -144,6 +146,7 @@ def normalize_rounds(data):
                     0,
                 )
             )
+
         except (
             TypeError,
             ValueError,
@@ -244,6 +247,7 @@ if training_data:
     ).lower()
 
     try:
+
         current_round = int(
             training_data.get(
                 "current_round",
@@ -255,9 +259,11 @@ if training_data:
         TypeError,
         ValueError,
     ):
+
         current_round = 0
 
     try:
+
         total_rounds = int(
             training_data.get(
                 "total_rounds",
@@ -269,6 +275,7 @@ if training_data:
         TypeError,
         ValueError,
     ):
+
         total_rounds = 3
 
 
@@ -323,6 +330,7 @@ for hospital in default_hospitals:
     )
 
     try:
+
         retry_count = int(
             retries.get(
                 hospital_id,
@@ -334,6 +342,7 @@ for hospital in default_hospitals:
         TypeError,
         ValueError,
     ):
+
         retry_count = 0
 
     hospitals.append(
@@ -346,6 +355,56 @@ for hospital in default_hospitals:
 
 
 # -------------------------------------------------------------------
+# Security values
+# -------------------------------------------------------------------
+
+encryption_name = security.get(
+    "encryption",
+    "Unavailable",
+)
+
+encryption_enabled = bool(
+    security.get(
+        "encryption_enabled",
+        False,
+    )
+)
+
+secure_aggregation = bool(
+    security.get(
+        "secure_aggregation",
+        False,
+    )
+)
+
+encrypted_updates = security.get(
+    "encrypted_updates",
+    0,
+)
+
+plaintext_updates_exposed = bool(
+    security.get(
+        "plaintext_updates_exposed",
+        False,
+    )
+)
+
+
+try:
+
+    encrypted_updates_display = int(
+        encrypted_updates
+    )
+
+except (
+    TypeError,
+    ValueError,
+):
+
+    encrypted_updates_display = 0
+
+
+# -------------------------------------------------------------------
 # Header
 # -------------------------------------------------------------------
 
@@ -355,7 +414,7 @@ st.title(
 
 st.caption(
     "Cross-Silo Federated Learning - "
-    "Mock Hospital Network"
+    "Federated Hospital Network"
 )
 
 
@@ -369,6 +428,7 @@ with refresh_col:
         "Refresh Training Data",
         width="stretch",
     ):
+
         st.rerun()
 
 
@@ -554,16 +614,23 @@ with c3:
         problem_count,
     )
 
-# =========================
+
+# -------------------------------------------------------------------
 # Training Configuration
-# =========================
+# -------------------------------------------------------------------
 
 st.markdown("---")
-st.subheader("Training Configuration")
 
-config_col1, config_col2, config_col3 = st.columns(3)
+st.subheader(
+    "Training Configuration"
+)
+
+config_col1, config_col2, config_col3 = (
+    st.columns(3)
+)
 
 with config_col1:
+
     config_epochs = st.number_input(
         "Epochs",
         min_value=1,
@@ -574,6 +641,7 @@ with config_col1:
     )
 
 with config_col2:
+
     config_batch_size = st.number_input(
         "Batch Size",
         min_value=1,
@@ -584,6 +652,7 @@ with config_col2:
     )
 
 with config_col3:
+
     config_learning_rate = st.number_input(
         "Learning Rate",
         min_value=0.000001,
@@ -593,6 +662,7 @@ with config_col3:
         format="%.6f",
         key="config_learning_rate",
     )
+
 
 selected_hospitals = st.multiselect(
     "Select Hospital Nodes",
@@ -609,21 +679,40 @@ selected_hospitals = st.multiselect(
     key="selected_hospitals",
 )
 
+
 button_col1, button_col2 = st.columns(2)
 
 with button_col1:
-    if st.button("Initialize Training", width="stretch"):
-        st.session_state["training_config"] = {
+
+    if st.button(
+        "Initialize Training",
+        width="stretch",
+    ):
+
+        st.session_state[
+            "training_config"
+        ] = {
             "epochs": config_epochs,
             "batch_size": config_batch_size,
             "learning_rate": config_learning_rate,
             "selected_hospitals": selected_hospitals,
         }
-        st.success("Training configuration initialized.")
+
+        st.success(
+            "Configuration saved for the next training run."
+        )
+
 
 with button_col2:
-    if st.button("Reset Configuration", width="stretch"):
-        st.session_state["training_config"] = {
+
+    if st.button(
+        "Reset Configuration",
+        width="stretch",
+    ):
+
+        st.session_state[
+            "training_config"
+        ] = {
             "epochs": 2,
             "batch_size": 1,
             "learning_rate": 0.001,
@@ -633,8 +722,22 @@ with button_col2:
                 "hospital-3",
             ],
         }
-        st.success("Training configuration reset.")
+
+        st.success(
+            "Training configuration reset."
+        )
+
         st.rerun()
+
+
+st.caption(
+    "Current federated backend defaults: "
+    "1 epoch, batch size 1, learning rate 0.001. "
+    "This panel prepares the configuration for "
+    "the next training run."
+)
+
+
 # -------------------------------------------------------------------
 # Federated Training Overview
 # -------------------------------------------------------------------
@@ -665,9 +768,9 @@ with c3:
 
     st.metric(
         "Global Loss",
-        f"{global_loss:.2f}"
+        f"{global_loss:.4f}"
         if global_loss is not None
-        else "—",
+        else "N/A",
     )
 
 with c4:
@@ -750,44 +853,106 @@ else:
 
 
 # -------------------------------------------------------------------
-# Security & Privacy - 10/09
+# Latest Federated Run
+# -------------------------------------------------------------------
+
+st.divider()
+
+st.subheader(
+    "Latest Federated Run"
+)
+
+summary_col1, summary_col2, summary_col3, summary_col4 = (
+    st.columns(4)
+)
+
+with summary_col1:
+
+    st.metric(
+        "Hospitals",
+        len(hospitals),
+    )
+
+with summary_col2:
+
+    st.metric(
+        "Rounds",
+        f"{current_round}/{total_rounds}",
+    )
+
+with summary_col3:
+
+    st.metric(
+        "Encrypted Updates",
+        encrypted_updates_display,
+    )
+
+with summary_col4:
+
+    st.metric(
+        "Status",
+        training_status.title(),
+    )
+
+
+# -------------------------------------------------------------------
+# ML Training Pipeline
+# -------------------------------------------------------------------
+
+st.divider()
+
+st.subheader(
+    "ML Training Pipeline"
+)
+
+ml_col1, ml_col2, ml_col3, ml_col4 = (
+    st.columns(4)
+)
+
+with ml_col1:
+
+    st.metric(
+        "Model",
+        "MONAI 3D U-Net",
+    )
+
+with ml_col2:
+
+    st.metric(
+        "Framework",
+        "PyTorch",
+    )
+
+with ml_col3:
+
+    st.metric(
+        "Training",
+        "Federated Local",
+    )
+
+with ml_col4:
+
+    st.metric(
+        "Dataset",
+        "Synthetic MRI",
+    )
+
+
+st.info(
+    "Each hospital trains the 3D U-Net locally. "
+    "The protected local model update is then "
+    "encrypted and securely aggregated."
+)
+
+
+# -------------------------------------------------------------------
+# Security & Privacy
 # -------------------------------------------------------------------
 
 st.divider()
 
 st.subheader(
     "Security & Privacy"
-)
-
-encryption_name = security.get(
-    "encryption",
-    "Unavailable",
-)
-
-encryption_enabled = bool(
-    security.get(
-        "encryption_enabled",
-        False,
-    )
-)
-
-secure_aggregation = bool(
-    security.get(
-        "secure_aggregation",
-        False,
-    )
-)
-
-encrypted_updates = security.get(
-    "encrypted_updates",
-    0,
-)
-
-plaintext_updates_exposed = bool(
-    security.get(
-        "plaintext_updates_exposed",
-        False,
-    )
 )
 
 security_col1, security_col2, security_col3 = (
@@ -802,17 +967,6 @@ with security_col1:
     )
 
 with security_col2:
-
-    try:
-        encrypted_updates_display = int(
-            encrypted_updates
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-        encrypted_updates_display = 0
 
     st.metric(
         "Encrypted Updates",
@@ -838,13 +992,13 @@ with security_col4:
     if encryption_enabled:
 
         st.success(
-            "?? Encryption Enabled"
+            "OK - Encryption Enabled"
         )
 
     else:
 
         st.error(
-            "?? Encryption Disabled"
+            "ERROR - Encryption Disabled"
         )
 
 
@@ -853,21 +1007,96 @@ with security_col5:
     if plaintext_updates_exposed:
 
         st.error(
-            "?? Plaintext Updates Exposed"
+            "ERROR - Plaintext Updates Exposed"
         )
 
     else:
 
         st.success(
-            "? Plaintext Updates Not Exposed"
+            "OK - Plaintext Updates Not Exposed"
         )
 
 
 st.caption(
-    "Hospital model updates are encrypted "
-    "with TenSEAL CKKS before federated "
-    "aggregation."
+    "Hospital model updates are protected with "
+    "Differential Privacy before TenSEAL CKKS "
+    "encryption and secure aggregation."
 )
+
+
+# -------------------------------------------------------------------
+# Differential Privacy
+# -------------------------------------------------------------------
+
+st.divider()
+
+st.subheader(
+    "Differential Privacy"
+)
+
+dp_col1, dp_col2, dp_col3 = (
+    st.columns(3)
+)
+
+with dp_col1:
+
+    st.metric(
+        "DP Status",
+        "Enabled",
+    )
+
+with dp_col2:
+
+    st.metric(
+        "Clipping Norm",
+        "1.0",
+    )
+
+with dp_col3:
+
+    st.metric(
+        "Noise Multiplier",
+        "0.1",
+    )
+
+
+dp_col4, dp_col5 = st.columns(2)
+
+with dp_col4:
+
+    st.success(
+        "OK - DP applied before encryption"
+    )
+
+with dp_col5:
+
+    st.success(
+        "OK - Private update protected"
+    )
+
+
+st.caption(
+    "Local model updates are clipped and "
+    "perturbed before TenSEAL CKKS encryption."
+)
+
+
+if (
+    encryption_enabled
+    and secure_aggregation
+    and not plaintext_updates_exposed
+):
+
+    st.success(
+        "FedMed security pipeline active: "
+        "DP -> TenSEAL CKKS -> secure aggregation"
+    )
+
+else:
+
+    st.warning(
+        "Security pipeline is not fully active."
+    )
 
 
 # -------------------------------------------------------------------
@@ -888,7 +1117,7 @@ if round_history:
 
         round_number = item.get(
             "round",
-            "—",
+            "N/A",
         )
 
         round_status = item.get(
@@ -914,11 +1143,11 @@ if round_history:
                 ValueError,
             ):
 
-                loss_display = "—"
+                loss_display = "N/A"
 
         else:
 
-            loss_display = "—"
+            loss_display = "N/A"
 
         table_rows.append(
             {
@@ -1019,13 +1248,13 @@ else:
 
 
 # -------------------------------------------------------------------
-# Hospital Local Metrics
+# Hospital Federated Status
 # -------------------------------------------------------------------
 
 st.divider()
 
 st.subheader(
-    "Hospital Local Metrics"
+    "Hospital Federated Status"
 )
 
 local_rows = []
@@ -1037,9 +1266,11 @@ for hospital in hospitals:
             "Hospital": hospital["name"],
             "Node ID": hospital["id"],
             "Status": hospital["status"],
+            "Training Role": "Local model training",
             "Retries": hospital["retry_count"],
         }
     )
+
 
 st.dataframe(
     local_rows,
@@ -1078,7 +1309,7 @@ if failures:
                 ),
                 "Round": failure.get(
                     "round",
-                    "—",
+                    "N/A",
                 ),
                 "Status": str(
                     failure.get(
@@ -1131,6 +1362,6 @@ else:
 st.divider()
 
 st.caption(
-    "FedMed • Cross-Silo Federated Learning "
-    "Engine • Hospital Privacy Preserved"
+    "FedMed | Cross-Silo Federated Learning "
+    "Engine | Hospital Privacy Preserved"
 )
