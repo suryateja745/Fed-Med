@@ -18,7 +18,7 @@ from app.federated.metrics import (
 )
 
 from app.federated.secure_aggregation import (
-    aggregate_encrypted_updates,
+    aggregate_encrypted_chunks,
 )
 
 
@@ -31,17 +31,23 @@ KNOWN_HOSPITALS = {
 
 def fit_config(
     server_round: int,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     return {
         "server_round": server_round,
+        "epochs": 1,
+        "batch_size": 1,
+        "learning_rate": 1e-3,
+        "dp_max_norm": 1.0,
+        "dp_noise_multiplier": 0.1,
     }
 
 
 def evaluate_config(
     server_round: int,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     return {
         "server_round": server_round,
+        "batch_size": 1,
     }
 
 
@@ -67,17 +73,16 @@ class FedMedStrategy(
         results,
         failures,
     ):
-        """Aggregate TenSEAL-encrypted client updates."""
-
         print(
             f"[Round {server_round}] "
             f"Received {len(results)} "
-            f"successful fit result(s)"
+            "successful fit result(s)"
         )
 
         print(
             f"[Round {server_round}] "
-            f"Received {len(failures)} failure(s)"
+            f"Received {len(failures)} "
+            "failure(s)"
         )
 
         set_training_status(
@@ -85,9 +90,6 @@ class FedMedStrategy(
             server_round,
         )
 
-        # ---------------------------------------------------------
-        # Successful hospitals
-        # ---------------------------------------------------------
         successful_hospitals: set[str] = set()
 
         for _, fit_res in results:
@@ -115,9 +117,6 @@ class FedMedStrategy(
                     f"{hospital_id} -> trained"
                 )
 
-        # ---------------------------------------------------------
-        # Failed hospitals
-        # ---------------------------------------------------------
         failed_hospitals: set[str] = set()
 
         for failure in failures:
@@ -125,9 +124,7 @@ class FedMedStrategy(
                 isinstance(failure, tuple)
                 and len(failure) == 2
             ):
-                failed_client, detail = (
-                    failure
-                )
+                failed_client, detail = failure
 
                 hospital_id = (
                     self._extract_hospital_id(
@@ -150,7 +147,6 @@ class FedMedStrategy(
                     f"Client failure: {failure}"
                 )
 
-        # Infer missing hospital if necessary.
         if (
             len(results) + len(failures)
             >= len(KNOWN_HOSPITALS)
@@ -164,7 +160,6 @@ class FedMedStrategy(
                 missing_hospitals
             )
 
-        # Persist failures.
         for hospital_id in sorted(
             failed_hospitals
         ):
@@ -176,63 +171,89 @@ class FedMedStrategy(
 
             print(
                 f"[Round {server_round}] "
-                f"{hospital_id} -> timeout/failure"
+                f"{hospital_id} -> "
+                "timeout/failure"
             )
 
-        # ---------------------------------------------------------
-        # Secure aggregation
-        # ---------------------------------------------------------
         if not results:
             print(
                 f"[Round {server_round}] "
-                f"No successful encrypted updates"
+                "No successful encrypted updates"
             )
+
             return None
 
-        encrypted_updates: list[bytes] = []
+        # ---------------------------------------------------------
+        # Extract encrypted chunks from each client.
+        # Keep chunk positions aligned across hospitals.
+        # ---------------------------------------------------------
+        client_encrypted_updates: list[
+            list[bytes]
+        ] = []
 
         for _, fit_res in results:
             arrays = parameters_to_ndarrays(
                 fit_res.parameters
             )
 
+            client_chunks: list[bytes] = []
+
             for array in arrays:
-                encrypted_updates.append(
+                client_chunks.append(
                     np.asarray(
                         array,
                         dtype=np.uint8,
                     ).tobytes()
                 )
 
-        print(
-            f"[Round {server_round}] "
-            f"Received {len(encrypted_updates)} "
-            f"encrypted update(s)"
+            client_encrypted_updates.append(
+                client_chunks
+            )
+
+        chunk_count = len(
+            client_encrypted_updates[0]
         )
 
         print(
             f"[Round {server_round}] "
-            f"Performing TenSEAL CKKS secure aggregation"
+            f"Received "
+            f"{len(results)} encrypted "
+            f"client update(s)"
+        )
+
+        print(
+            f"[Round {server_round}] "
+            f"Encrypted chunks per client: "
+            f"{chunk_count}"
+        )
+
+        print(
+            f"[Round {server_round}] "
+            "Performing TenSEAL CKKS "
+            "secure aggregation"
         )
 
         try:
             encrypted_sum = (
-                aggregate_encrypted_updates(
-                    encrypted_updates
+                aggregate_encrypted_chunks(
+                    client_encrypted_updates
                 )
             )
+
         except Exception as exc:
             print(
                 f"[Round {server_round}] "
-                f"Encrypted aggregation failed: {exc}"
+                f"Encrypted aggregation failed: "
+                f"{exc}"
             )
+
             set_training_status(
                 "error",
                 server_round,
             )
+
             return None
 
-        # Convert encrypted aggregate sum to FedAvg mean.
         aggregate_sum = np.asarray(
             encrypted_sum,
             dtype=np.float32,
@@ -248,22 +269,27 @@ class FedMedStrategy(
             )
         )
 
+        # Preserve existing dashboard semantics:
+        # one encrypted update per successful hospital.
         record_security_updates(
-            len(encrypted_updates)
+            len(results)
         )
 
         aggregation_metrics = {
             "encrypted_updates": len(
-                encrypted_updates
+                results
             ),
+            "encrypted_chunks": chunk_count,
             "secure_aggregation": True,
             "encryption": "TenSEAL-CKKS",
             "plaintext_updates_exposed": False,
+            "dp_enabled": True,
         }
 
         print(
             f"[Round {server_round}] "
-            f"TenSEAL secure aggregation completed"
+            "TenSEAL secure aggregation "
+            "completed"
         )
 
         print(
@@ -286,13 +312,13 @@ class FedMedStrategy(
         print(
             f"[Round {server_round}] "
             f"Received {len(results)} "
-            f"evaluation result(s)"
+            "evaluation result(s)"
         )
 
         print(
             f"[Round {server_round}] "
             f"Received {len(failures)} "
-            f"evaluation failure(s)"
+            "evaluation failure(s)"
         )
 
         aggregated = (
@@ -306,8 +332,9 @@ class FedMedStrategy(
         if aggregated is None:
             print(
                 f"[Round {server_round}] "
-                f"No aggregated evaluation result"
+                "No aggregated evaluation result"
             )
+
             return None
 
         loss, metrics = aggregated

@@ -9,32 +9,45 @@ import tenseal as ts
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
-PUBLIC_CONTEXT_FILE = DATA_DIR / "tenseal_public_context.bin"
-SECRET_CONTEXT_FILE = DATA_DIR / "tenseal_secret_context.bin"
+
+PUBLIC_CONTEXT_FILE = (
+    DATA_DIR / "tenseal_public_context.bin"
+)
+
+SECRET_CONTEXT_FILE = (
+    DATA_DIR / "tenseal_secret_context.bin"
+)
 
 POLY_MODULUS_DEGREE = 8192
 COEFF_MOD_BIT_SIZES = [60, 40, 40, 60]
 GLOBAL_SCALE = 2**40
 
+# Keep chunks comfortably below CKKS slot capacity.
+CKKS_CHUNK_SIZE = 2048
+
 
 def create_context() -> ts.Context:
-    """Create the private TenSEAL CKKS context."""
-
     context = ts.context(
         ts.SCHEME_TYPE.CKKS,
         poly_modulus_degree=POLY_MODULUS_DEGREE,
         coeff_mod_bit_sizes=COEFF_MOD_BIT_SIZES,
     )
+
     context.global_scale = GLOBAL_SCALE
+
     return context
 
 
 def ensure_context_files() -> None:
-    """Create private and public context files once."""
+    DATA_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    if SECRET_CONTEXT_FILE.exists() and PUBLIC_CONTEXT_FILE.exists():
+    if (
+        SECRET_CONTEXT_FILE.exists()
+        and PUBLIC_CONTEXT_FILE.exists()
+    ):
         return
 
     context = create_context()
@@ -76,12 +89,21 @@ def load_public_context() -> ts.Context:
     )
 
 
-def encrypt_update(values: np.ndarray | Iterable[float]) -> bytes:
-    """Encrypt a local model update and return serialized ciphertext."""
-
+def encrypt_update(
+    values: np.ndarray | Iterable[float],
+) -> bytes:
     public_context = load_public_context()
 
-    array = np.asarray(values, dtype=np.float64).reshape(-1)
+    array = np.asarray(
+        values,
+        dtype=np.float64,
+    ).reshape(-1)
+
+    if len(array) > CKKS_CHUNK_SIZE:
+        raise ValueError(
+            "Update exceeds CKKS chunk size. "
+            "Use encrypt_update_chunks()."
+        )
 
     encrypted = ts.ckks_vector(
         public_context,
@@ -91,11 +113,35 @@ def encrypt_update(values: np.ndarray | Iterable[float]) -> bytes:
     return encrypted.serialize()
 
 
+def encrypt_update_chunks(
+    values: np.ndarray | Iterable[float],
+) -> list[bytes]:
+    array = np.asarray(
+        values,
+        dtype=np.float32,
+    ).reshape(-1)
+
+    encrypted_chunks: list[bytes] = []
+
+    for start in range(
+        0,
+        len(array),
+        CKKS_CHUNK_SIZE,
+    ):
+        chunk = array[
+            start:start + CKKS_CHUNK_SIZE
+        ]
+
+        encrypted_chunks.append(
+            encrypt_update(chunk)
+        )
+
+    return encrypted_chunks
+
+
 def aggregate_encrypted_updates(
     encrypted_updates: list[bytes],
 ) -> np.ndarray:
-    """Homomorphically add ciphertexts and decrypt only the aggregate."""
-
     if not encrypted_updates:
         raise ValueError(
             "At least one encrypted update is required"
@@ -113,11 +159,55 @@ def aggregate_encrypted_updates(
             private_context,
             payload,
         )
+
         aggregate += current
 
-    decrypted = aggregate.decrypt()
-
     return np.asarray(
-        decrypted,
+        aggregate.decrypt(),
         dtype=np.float32,
+    )
+
+
+def aggregate_encrypted_chunks(
+    client_updates: list[list[bytes]],
+) -> np.ndarray:
+    if not client_updates:
+        raise ValueError(
+            "At least one client update is required"
+        )
+
+    chunk_count = len(
+        client_updates[0]
+    )
+
+    if chunk_count == 0:
+        raise ValueError(
+            "Client update contains no chunks"
+        )
+
+    for update in client_updates:
+        if len(update) != chunk_count:
+            raise ValueError(
+                "All clients must have the same "
+                "number of encrypted chunks"
+            )
+
+    aggregated_chunks: list[np.ndarray] = []
+
+    for chunk_index in range(
+        chunk_count
+    ):
+        chunk_payloads = [
+            client_chunks[chunk_index]
+            for client_chunks in client_updates
+        ]
+
+        aggregated_chunks.append(
+            aggregate_encrypted_updates(
+                chunk_payloads
+            )
+        )
+
+    return np.concatenate(
+        aggregated_chunks
     )

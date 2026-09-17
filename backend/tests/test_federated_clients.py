@@ -30,7 +30,9 @@ def test_get_parameters():
 
     parameters = client.get_parameters({})
 
+    # Real UNet3D is represented as one flattened parameter vector.
     assert len(parameters) == 1
+    assert parameters[0].size == 34886
 
 
 def test_fit():
@@ -43,9 +45,13 @@ def test_fit():
         {},
     )
 
-    assert len(updated) == 1
+    # The encrypted 34,886-parameter vector is split into
+    # multiple CKKS chunks for secure aggregation.
+    assert len(updated) > 1
     assert examples == 1
     assert metrics["hospital_id"] == "hospital-1"
+    assert metrics["dp_enabled"] is True
+    assert metrics["encryption"] == "TenSEAL-CKKS"
 
 
 def test_evaluate():
@@ -58,6 +64,7 @@ def test_evaluate():
         {},
     )
 
-    assert loss == 0.5
+    assert loss >= 0.0
+    assert loss < 10.0
     assert examples == 1
     assert metrics["hospital_id"] == "hospital-1"
