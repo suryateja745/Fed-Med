@@ -8,7 +8,7 @@ import streamlit as st
 # -------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="FedMed - Hospital Nodes",
+    page_title="FedMed - Federated Hospital Dashboard",
     page_icon="H",
     layout="wide",
 )
@@ -409,7 +409,7 @@ except (
 # -------------------------------------------------------------------
 
 st.title(
-    "FedMed Hospital Node Management"
+    "FedMed Federated Hospital Dashboard"
 )
 
 st.caption(
