@@ -295,7 +295,6 @@ class FedMedStrategy(FedAvg):
         if config is None:
             config = load_config()
 
-        self.model = model
         self.config = config
         self.weighted_by_dice = weighted_by_dice
         self.logger = setup_logger(name="FedMedStrategy")
@@ -306,7 +305,9 @@ class FedMedStrategy(FedAvg):
         # Initialize Global Model Manager
         if model_manager is not None:
             self.model_manager = model_manager
+            self.model = model or getattr(model_manager, "model", None)
         else:
+            self.model = model
             ckpt_dir = self.config.get("storage", {}).get("checkpoint_dir", "./checkpoints")
             self.model_manager = GlobalModelManager(
                 checkpoint_dir=ckpt_dir,
@@ -316,9 +317,10 @@ class FedMedStrategy(FedAvg):
             )
 
         fed_cfg = config.get("federation", {})
-        initial_params = get_initial_parameters(model=model, config=config)
+        initial_params = get_initial_parameters(model=self.model, config=config)
         fit_cfg_fn = on_fit_config_fn or get_fit_config_fn(config)
         eval_cfg_fn = on_evaluate_config_fn or get_evaluate_config_fn(config)
+
 
         super().__init__(
             fraction_fit=fraction_fit or float(fed_cfg.get("fraction_fit", 1.0)),

@@ -70,10 +70,12 @@ class TestAutoTriggers(unittest.TestCase):
             min_clients_per_round=2,
         )
         self.strategy = FedMedStrategy(
+            model=self.model,
             model_manager=self.model_manager,
             min_fit_clients=2,
             min_available_clients=2,
         )
+
         self.agg_trigger = AutoAggregateTrigger(
             sync_manager=self.sync_manager,
             strategy=self.strategy,
