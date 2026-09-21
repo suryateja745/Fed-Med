@@ -108,6 +108,7 @@ class TestClientCheckpointAndDiffing(unittest.TestCase):
                 out_channels=self.out_channels,
                 channels=(4, 8, 16),
                 strides=(2, 2),
+                dropout=0.0,
             )
             ckpt = mgr.load_latest(fresh_model)
             self.assertEqual(ckpt["round"], 1)
@@ -143,6 +144,7 @@ class TestClientCheckpointAndDiffing(unittest.TestCase):
                 out_channels=self.out_channels,
                 channels=(4, 8, 16),
                 strides=(2, 2),
+                dropout=0.0,
             )
             best_ckpt = mgr.load_best(fresh_model)
             self.assertEqual(best_ckpt["round"], 3)

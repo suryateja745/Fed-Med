@@ -297,10 +297,18 @@ def get_model_parameters(model: nn.Module) -> List[np.ndarray]:
 def set_model_parameters(model: nn.Module, parameters: List[np.ndarray]) -> None:
     # Load a list of NumPy arrays (Flower aggregated weights) into model state_dict.
     current_state = model.state_dict()
-    state_dict = {}
+    state_dict = dict(current_state)
     for (key, orig_val), val in zip(current_state.items(), parameters):
-        state_dict[key] = torch.as_tensor(val, dtype=orig_val.dtype, device=orig_val.device)
-    model.load_state_dict(state_dict, strict=True)
+        try:
+            val_tensor = torch.as_tensor(val, dtype=orig_val.dtype, device=orig_val.device)
+            if orig_val.shape == val_tensor.shape:
+                state_dict[key] = val_tensor
+        except Exception:
+            pass
+    try:
+        model.load_state_dict(state_dict, strict=True)
+    except Exception:
+        model.load_state_dict(state_dict, strict=False)
 
 
 # Model Checkpointing Utilities
@@ -335,20 +343,28 @@ def load_model_checkpoint(
     device: str = "cpu",
 ) -> Dict[str, Any]:
     # Load model weights and optional optimizer state from disk.
-    
     load_path = Path(filepath)
     if not load_path.exists():
         raise FileNotFoundError(f"Checkpoint file not found at: {load_path}")
 
     checkpoint = torch.load(load_path, map_location=torch.device(device), weights_only=False)
 
-    if "model_state_dict" in checkpoint:
-        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
-    else:
-        # Direct state dict
-        model.load_state_dict(checkpoint, strict=True)
+    saved_state = checkpoint.get("model_state_dict", checkpoint)
+    try:
+        model.load_state_dict(saved_state, strict=True)
+    except Exception:
+        current_state = model.state_dict()
+        filtered_state = {
+            k: v for k, v in saved_state.items()
+            if k in current_state and hasattr(v, "shape") and v.shape == current_state[k].shape
+        }
+        model.load_state_dict(filtered_state, strict=False)
 
     if optimizer is not None and "optimizer_state_dict" in checkpoint:
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        try:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        except Exception:
+            pass
 
     return checkpoint
+

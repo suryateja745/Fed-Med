@@ -37,22 +37,22 @@ from federation.models.unet3d import (
 )
 from federation.server.fl_server import get_evaluate_config_fn, get_fit_config_fn
 from federation.server.model_manager import GlobalModelManager
-from federation.server.strategy import FedMedStrategy, create_fedmed_strategy
+from federation.server.strategy import (
+    ClientProxy,
+    EvaluateRes,
+    FedMedStrategy,
+    FitRes,
+    Parameters,
+    aggregate_weighted_parameters,
+    create_fedmed_strategy,
+    ndarrays_to_parameters,
+    parameters_to_ndarrays,
+)
 from federation.utils.config_loader import load_config
 from federation.utils.logger import setup_logger
 
 try:
     import flwr as fl
-    from flwr.common import (
-        EvaluateIns,
-        EvaluateRes,
-        FitIns,
-        FitRes,
-        NDArrays,
-        Parameters,
-        ndarrays_to_parameters,
-        parameters_to_ndarrays,
-    )
     HAS_FLWR = True
 except ImportError:
     HAS_FLWR = False
@@ -150,19 +150,26 @@ def build_client_factory(
 
         target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
+        client_config = {
+            "training": {
+                "local_epochs": epochs or cfg.get("training", {}).get("local_epochs", 1),
+                "learning_rate": lr or cfg.get("training", {}).get("learning_rate", 0.0002),
+                "loss_function": cfg.get("training", {}).get("loss_function", "DiceCELoss"),
+            },
+            "storage": {
+                "checkpoint_dir": f"./checkpoints/sim",
+                "logs_dir": "./logs",
+            },
+        }
+
         # Instantiate FedMedClient
         fedmed_client = FedMedClient(
             hospital_id=hospital_id,
             model=model,
             train_loader=train_loader,
             val_loader=val_loader,
-            epochs=epochs or cfg.get("training", {}).get("local_epochs", 1),
-            learning_rate=lr or cfg.get("training", {}).get("learning_rate", 0.0002),
-            loss_name=cfg.get("training", {}).get("loss_function", "DiceCELoss"),
+            config=client_config,
             device=target_device,
-            enable_checkpointing=True,
-            checkpoint_dir=f"./checkpoints/sim/{hospital_id}",
-            history_file=f"./logs/sim_{hospital_id}_history.json",
         )
 
         if HAS_FLWR:

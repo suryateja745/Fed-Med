@@ -34,9 +34,10 @@ except ImportError:
     HAS_FLWR = False
     # Fallback types for offline development and testing
     class Parameters:
-        def __init__(self, tensors: List[bytes] = None, tensor_type: str = "numpy.ndarray"):
-            self.tensors = tensors or []
+        def __init__(self, tensors: Optional[List[bytes]] = None, tensor_type: str = "numpy.ndarray", ndarrays: Optional[List[np.ndarray]] = None):
+            self.tensors = tensors or ([arr.tobytes() for arr in ndarrays] if ndarrays else [])
             self.tensor_type = tensor_type
+            self._ndarrays = ndarrays
 
     class FitRes:
         def __init__(self, status=None, parameters=None, num_examples=0, metrics=None):
@@ -59,9 +60,11 @@ except ImportError:
             self.__dict__.update(kwargs)
 
     def ndarrays_to_parameters(ndarrays: List[np.ndarray]) -> Parameters:
-        return Parameters(tensors=[arr.tobytes() for arr in ndarrays])
+        return Parameters(tensors=[arr.tobytes() for arr in ndarrays], ndarrays=ndarrays)
 
     def parameters_to_ndarrays(parameters: Parameters) -> List[np.ndarray]:
+        if hasattr(parameters, "_ndarrays") and parameters._ndarrays is not None:
+            return parameters._ndarrays
         return []
 
 from federation.models.metrics import get_loss_function

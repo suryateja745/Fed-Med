@@ -27,25 +27,28 @@ except ImportError:
     HAS_FLWR = False
     # Fallback placeholders for typing and offline unit testing
     class Parameters:
-        def __init__(self, tensors: List[bytes] = None, tensor_type: str = "numpy.ndarray"):
-            self.tensors = tensors or []
+        def __init__(self, tensors: Optional[List[bytes]] = None, tensor_type: str = "numpy.ndarray", ndarrays: Optional[List[np.ndarray]] = None):
+            self.tensors = tensors or ([arr.tobytes() for arr in ndarrays] if ndarrays else [])
             self.tensor_type = tensor_type
+            self._ndarrays = ndarrays
 
     class Strategy:
         pass
 
     class FedAvg(Strategy):
         def __init__(self, **kwargs):
-            self.kwargs = kwargs
+            self.__dict__.update(kwargs)
 
     class ServerConfig:
         def __init__(self, num_rounds: int = 1):
             self.num_rounds = num_rounds
 
     def ndarrays_to_parameters(ndarrays: List[np.ndarray]) -> Parameters:
-        return Parameters(tensors=[arr.tobytes() for arr in ndarrays])
+        return Parameters(tensors=[arr.tobytes() for arr in ndarrays], ndarrays=ndarrays)
 
     def parameters_to_ndarrays(parameters: Parameters) -> List[np.ndarray]:
+        if hasattr(parameters, "_ndarrays") and parameters._ndarrays is not None:
+            return parameters._ndarrays
         return []
 
 from federation.models.unet3d import build_unet3d_from_config, get_model_parameters
