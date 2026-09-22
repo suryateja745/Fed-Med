@@ -4,11 +4,11 @@ import streamlit as st
 
 
 # -------------------------------------------------------------------
-# Page configuration
+# Page  configuration
 # -------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="FedMed - Federated Hospital Dashboard",
+    page_title="FedMed - Federated  FedMed Hospital Dashboard",
     page_icon="H",
     layout="wide",
 )
