@@ -15,7 +15,7 @@ def start_server() -> None:
 
     strategy = FedMedStrategy()
 
-    print("FedMed Flower Server starting - Secure Federated Learning...")
+    print("FedMed Flower Server starting - Secure Federated Learning dashboard...")
     print("FedMed federated strategy initialized")
     print(f"Federated rounds: {NUM_ROUNDS}")
     print(f"Round timeout: {ROUND_TIMEOUT} seconds")
