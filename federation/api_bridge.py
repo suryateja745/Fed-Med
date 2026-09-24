@@ -63,9 +63,15 @@ class FedMedAPIBridge:
         metadata = self._read_json(self.checkpoint_dir / "global_model_metadata.json")
         best_path = self.checkpoint_dir / "best_global_model.pth"
         latest_path = self.checkpoint_dir / "global_model_latest.pth"
+        best_enc_path = self.checkpoint_dir / "best_global_model.pth.enc"
+        latest_enc_path = self.checkpoint_dir / "global_model_latest.pth.enc"
 
         best_size_mb = round(best_path.stat().st_size / (1024 * 1024), 2) if best_path.exists() else 0.0
         latest_size_mb = round(latest_path.stat().st_size / (1024 * 1024), 2) if latest_path.exists() else 0.0
+        best_enc_size_mb = round(best_enc_path.stat().st_size / (1024 * 1024), 2) if best_enc_path.exists() else 0.0
+        latest_enc_size_mb = round(latest_enc_path.stat().st_size / (1024 * 1024), 2) if latest_enc_path.exists() else 0.0
+
+        encryption_meta = metadata.get("encryption", {}) if metadata else {}
 
         return {
             "latest_round": metadata.get("latest_round", 0) if metadata else 0,
@@ -73,11 +79,22 @@ class FedMedAPIBridge:
             "best_dice_score": metadata.get("best_dice", -1.0) if metadata else -1.0,
             "has_best_checkpoint": best_path.exists(),
             "has_latest_checkpoint": latest_path.exists(),
+            "has_encrypted_best": best_enc_path.exists(),
+            "has_encrypted_latest": latest_enc_path.exists(),
             "best_checkpoint_path": str(best_path) if best_path.exists() else None,
             "latest_checkpoint_path": str(latest_path) if latest_path.exists() else None,
+            "best_encrypted_path": str(best_enc_path) if best_enc_path.exists() else None,
+            "latest_encrypted_path": str(latest_enc_path) if latest_enc_path.exists() else None,
             "best_model_size_mb": best_size_mb,
             "latest_model_size_mb": latest_size_mb,
+            "best_encrypted_size_mb": best_enc_size_mb,
+            "latest_encrypted_size_mb": latest_enc_size_mb,
             "model_architecture": self.config.get("model", {}).get("name", "UNet3D"),
+            "encryption": {
+                "enabled": encryption_meta.get("enabled", False),
+                "cipher": encryption_meta.get("cipher", "AES-256-GCM"),
+                "key_id": encryption_meta.get("key_id"),
+            },
         }
 
     def get_metrics_history(self) -> List[Dict[str, Any]]:
@@ -223,7 +240,70 @@ class FedMedAPIBridge:
             "participating_hospitals": hospitals,
             "metrics_history": history,
             "system_health": health,
+            "security": self.get_encryption_status(),
         }
+
+    def get_encryption_status(self) -> Dict[str, Any]:
+        """Return cryptographic security status, cipher mode, and key fingerprint."""
+        metadata = self._read_json(self.checkpoint_dir / "global_model_metadata.json")
+        enc_meta = metadata.get("encryption", {}) if metadata else {}
+        key_path = self.checkpoint_dir / "fedmed_global_model.key"
+
+        encrypted_ckpts = list(self.checkpoint_dir.glob("*.pth.enc"))
+        dp_cfg = self.config.get("security", {}).get("differential_privacy", {})
+
+        return {
+            "global_weight_encryption": {
+                "enabled": enc_meta.get("enabled", key_path.exists()),
+                "cipher": enc_meta.get("cipher", "AES-256-GCM"),
+                "key_id": enc_meta.get("key_id"),
+                "has_key_file": key_path.exists(),
+                "encrypted_checkpoints_count": len(encrypted_ckpts),
+                "encrypted_files": [f.name for f in encrypted_ckpts],
+            },
+            "differential_privacy": {
+                "enabled": dp_cfg.get("enabled", False),
+                "epsilon": dp_cfg.get("epsilon", 1.0),
+                "delta": dp_cfg.get("delta", 1e-5),
+                "clip_norm": dp_cfg.get("clip_norm", 1.0),
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def get_checkpoint_file(self, target: str = "latest", encrypted: bool = True) -> Optional[Path]:
+        """Resolve path to requested checkpoint file (latest, best, or round number)."""
+        suffix = ".pth.enc" if encrypted else ".pth"
+        if target == "latest":
+            candidate = self.checkpoint_dir / f"global_model_latest{suffix}"
+            if candidate.exists():
+                return candidate
+        elif target == "best":
+            candidate = self.checkpoint_dir / f"best_global_model{suffix}"
+            if candidate.exists():
+                return candidate
+        elif target.isdigit():
+            round_num = int(target)
+            candidate = self.checkpoint_dir / f"global_model_round_{round_num:03d}{suffix}"
+            if candidate.exists():
+                return candidate
+
+        # Fallback to plain .pth if encrypted not found or vice versa
+        alt_suffix = ".pth" if encrypted else ".pth.enc"
+        if target == "latest":
+            alt = self.checkpoint_dir / f"global_model_latest{alt_suffix}"
+            if alt.exists():
+                return alt
+        elif target == "best":
+            alt = self.checkpoint_dir / f"best_global_model{alt_suffix}"
+            if alt.exists():
+                return alt
+        elif target.isdigit():
+            round_num = int(target)
+            alt = self.checkpoint_dir / f"global_model_round_{round_num:03d}{alt_suffix}"
+            if alt.exists():
+                return alt
+
+        return None
 
     def export_dashboard_json(
         self,

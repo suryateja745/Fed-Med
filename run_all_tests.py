@@ -47,6 +47,10 @@ TEST_MODULES = [
     ("Automated Triggers", "federation.server.test_triggers"),
     # 14. API Bridge & JSON Telemetry
     ("API Bridge & Telemetry", "federation.test_api_bridge"),
+    # 15. Global Model Weight Encryption & HMAC Signatures
+    ("Global Model Weight Encryption", "federation.security.test_global_encryption"),
+    # 16. Complete FastAPI Backend & Telemetry Routes
+    ("Production FastAPI Backend", "backend.test_backend"),
 ]
 
 

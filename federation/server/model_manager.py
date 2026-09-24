@@ -1,10 +1,12 @@
 """
 Global Model Checkpointing, Versioning, and State Management for FedMed Server.
 Manages global 3D U-Net checkpoint serialization, best model tracking, round-level
-versioning, and persistent metadata export (global_model_metadata.json).
+versioning, persistent metadata export (global_model_metadata.json), and authenticated
+global model weight encryption (AES-256-GCM / HMAC-SHA256).
 """
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +21,12 @@ from federation.models.unet3d import (
     save_model_checkpoint,
     set_model_parameters,
 )
+from federation.security.global_encryption import (
+    CryptographicIntegrityError,
+    EncryptionMetadata,
+    GlobalKeyManager,
+    GlobalWeightEncryptionManager,
+)
 from federation.utils.config_loader import load_config
 from federation.utils.logger import setup_logger
 
@@ -29,10 +37,11 @@ class GlobalModelManager:
 
     Responsibilities:
     - Save global model checkpoints after each federated aggregation round (global_model_round_{N}.pth).
-    - Track and save historical best global model (best_global_model.pth) based on validation Dice score.
-    - Maintain latest global model pointer (global_model_latest.pth).
+    - Encrypt global model weights at rest (AES-256-GCM authenticated cipher with HMAC-SHA256 signatures).
+    - Track and save historical best global model (best_global_model.pth / best_global_model.pth.enc).
+    - Maintain latest global model pointer (global_model_latest.pth / global_model_latest.pth.enc).
     - Export and update global model metadata registry JSON (global_model_metadata.json).
-    - Provide retrieval and loading functions for model inference and deployment.
+    - Provide secure loading, integrity verification, and key rotation functions.
     """
 
     def __init__(
@@ -42,6 +51,8 @@ class GlobalModelManager:
         config: Optional[Dict[str, Any]] = None,
         export_best: bool = True,
         keep_last_n: int = 5,
+        enable_encryption: bool = True,
+        encryption_manager: Optional[GlobalWeightEncryptionManager] = None,
     ) -> None:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +63,21 @@ class GlobalModelManager:
 
         self.logger = setup_logger(name="GlobalModelManager")
         self.metadata_file = self.checkpoint_dir / "global_model_metadata.json"
+
+        # Initialize Global Model Weight Encryption Manager
+        self.enable_encryption = enable_encryption
+        if self.enable_encryption:
+            if encryption_manager is not None:
+                self.encryption_manager = encryption_manager
+            else:
+                key_path = self.checkpoint_dir / "fedmed_global_model.key"
+                self.encryption_manager = GlobalWeightEncryptionManager(key_path=key_path)
+            self.logger.info(
+                f"[ModelManager] Global Model Weight Encryption ACTIVE "
+                f"(Cipher: AES-256-GCM, Key ID: {self.encryption_manager.key_id})"
+            )
+        else:
+            self.encryption_manager = None
 
         self.best_dice: float = -1.0
         self.best_round: int = 0
@@ -81,6 +107,11 @@ class GlobalModelManager:
             "best_dice": -1.0,
             "best_checkpoint": None,
             "latest_checkpoint": None,
+            "encryption": {
+                "enabled": self.enable_encryption,
+                "cipher": "AES-256-GCM" if self.enable_encryption else "NONE",
+                "key_id": self.encryption_manager.key_id if self.encryption_manager else None,
+            },
             "rounds_history": [],
         }
         self._write_metadata(initial_registry)
@@ -112,7 +143,8 @@ class GlobalModelManager:
         participating_clients: Optional[List[str]] = None,
     ) -> Path:
         """
-        Save global model weights for a completed federated round.
+        Save global model weights for a completed federated round, with automatic
+        AES-256-GCM authenticated encryption and HMAC-SHA256 signature generation.
 
         Args:
             round_num: Current federated aggregation round number.
@@ -130,12 +162,13 @@ class GlobalModelManager:
 
         metrics_dict = metrics or {}
         timestamp = datetime.now(timezone.utc).isoformat()
+        dice_score = float(metrics_dict.get("val_dice_mean", metrics_dict.get("dice_score", -1.0)))
 
         # Paths
         round_path = self.checkpoint_dir / f"global_model_round_{round_num:03d}.pth"
         latest_path = self.checkpoint_dir / "global_model_latest.pth"
 
-        # Save round-specific and latest checkpoints
+        # Save standard checkpoints
         save_model_checkpoint(
             model=target_model,
             filepath=round_path,
@@ -150,14 +183,13 @@ class GlobalModelManager:
         )
 
         # Check for new best model
-        dice_score = float(metrics_dict.get("val_dice_mean", metrics_dict.get("dice_score", -1.0)))
         is_best = False
+        best_path = self.checkpoint_dir / "best_global_model.pth"
         if self.export_best and dice_score > self.best_dice:
             prev_best = self.best_dice
             self.best_dice = dice_score
             self.best_round = round_num
             is_best = True
-            best_path = self.checkpoint_dir / "best_global_model.pth"
             save_model_checkpoint(
                 model=target_model,
                 filepath=best_path,
@@ -170,10 +202,60 @@ class GlobalModelManager:
                 f"Dice: {prev_best:.4f} -> {dice_score:.4f}"
             )
 
+        # Authenticated Encryption at Rest
+        encryption_telemetry: Dict[str, Any] = {"enabled": False}
+        if self.enable_encryption and self.encryption_manager:
+            round_enc_path = self.encryption_manager.encrypt_checkpoint_file(
+                source_path=round_path,
+                round_num=round_num,
+                dice_score=dice_score if dice_score >= 0 else None,
+            )
+            latest_enc_path = self.encryption_manager.encrypt_checkpoint_file(
+                source_path=latest_path,
+                target_path=self.checkpoint_dir / "global_model_latest.pth.enc",
+                round_num=round_num,
+                dice_score=dice_score if dice_score >= 0 else None,
+            )
+            if is_best:
+                self.encryption_manager.encrypt_checkpoint_file(
+                    source_path=best_path,
+                    target_path=self.checkpoint_dir / "best_global_model.pth.enc",
+                    round_num=round_num,
+                    dice_score=dice_score if dice_score >= 0 else None,
+                )
+
+            # Compute sha256 checksum of encrypted checkpoint
+            with open(round_enc_path, "rb") as f:
+                enc_bytes = f.read()
+            sha256_hash = hashlib.sha256(enc_bytes).hexdigest()
+
+            encryption_telemetry = {
+                "enabled": True,
+                "cipher": "AES-256-GCM",
+                "key_id": self.encryption_manager.key_id,
+                "encrypted_round_checkpoint": str(round_enc_path),
+                "encrypted_latest_checkpoint": str(latest_enc_path),
+                "sha256": sha256_hash,
+                "hmac_sha256": enc_bytes[-32:].hex(),
+            }
+            self.logger.info(
+                f"[ModelManager] Authenticated encryption applied to Round {round_num} "
+                f"(SHA256: {sha256_hash[:12]}..., Key ID: {self.encryption_manager.key_id})"
+            )
+
         # Update metadata registry
         registry = self.get_metadata()
         registry["latest_round"] = round_num
         registry["latest_checkpoint"] = str(latest_path)
+        if self.enable_encryption and self.encryption_manager:
+            registry["encryption"] = {
+                "enabled": True,
+                "cipher": "AES-256-GCM",
+                "key_id": self.encryption_manager.key_id,
+                "encrypted_latest_checkpoint": str(self.checkpoint_dir / "global_model_latest.pth.enc"),
+                "encrypted_best_checkpoint": str(self.checkpoint_dir / "best_global_model.pth.enc") if is_best or self.best_checkpoint_path else None,
+            }
+
         if is_best:
             registry["best_round"] = round_num
             registry["best_dice"] = dice_score
@@ -187,6 +269,7 @@ class GlobalModelManager:
             "participating_clients": participating_clients or [],
             "checkpoint_path": str(round_path),
             "is_best": is_best,
+            "encryption": encryption_telemetry,
         }
         registry.setdefault("rounds_history", []).append(round_entry)
         self._write_metadata(registry)
@@ -223,6 +306,14 @@ class GlobalModelManager:
                 round_num=round_num,
                 metrics={**metrics, "best_dice": dice_score},
             )
+            if self.enable_encryption and self.encryption_manager:
+                self.encryption_manager.encrypt_checkpoint_file(
+                    source_path=best_path,
+                    target_path=self.checkpoint_dir / "best_global_model.pth.enc",
+                    round_num=round_num,
+                    dice_score=dice_score,
+                )
+
             self.best_checkpoint_path = best_path
             registry["best_round"] = round_num
             registry["best_dice"] = dice_score
@@ -251,18 +342,26 @@ class GlobalModelManager:
     ) -> Tuple[nn.Module, Dict[str, Any]]:
         """
         Load weights from global_model_latest.pth into model.
+        Transparently decrypts if loading from encrypted .enc checkpoint.
         """
         target_model = model or self.model
         latest_path = self.checkpoint_dir / "global_model_latest.pth"
-        if not latest_path.exists():
-            round_ckpts = self.list_round_checkpoints()
-            if round_ckpts:
-                latest_path = round_ckpts[-1]
-            else:
-                raise FileNotFoundError(f"No global checkpoint found in {self.checkpoint_dir}")
+        latest_enc_path = self.checkpoint_dir / "global_model_latest.pth.enc"
 
-        ckpt = load_model_checkpoint(model=target_model, filepath=latest_path, device=device)
-        return target_model, ckpt
+        if latest_path.exists():
+            ckpt = load_model_checkpoint(model=target_model, filepath=latest_path, device=device)
+            return target_model, ckpt
+
+        if latest_enc_path.exists() and self.encryption_manager:
+            return self.load_encrypted_checkpoint(latest_enc_path, model=target_model, device=device)
+
+        round_ckpts = self.list_round_checkpoints()
+        if round_ckpts:
+            latest_path = round_ckpts[-1]
+            ckpt = load_model_checkpoint(model=target_model, filepath=latest_path, device=device)
+            return target_model, ckpt
+
+        raise FileNotFoundError(f"No global checkpoint found in {self.checkpoint_dir}")
 
     def load_best(
         self,
@@ -271,14 +370,20 @@ class GlobalModelManager:
     ) -> Tuple[nn.Module, Dict[str, Any]]:
         """
         Load weights from best_global_model.pth into model.
+        Transparently decrypts if loading from encrypted .enc checkpoint.
         """
         target_model = model or self.model
         best_path = self.checkpoint_dir / "best_global_model.pth"
-        if not best_path.exists():
-            raise FileNotFoundError(f"No best global checkpoint found at {best_path}")
+        best_enc_path = self.checkpoint_dir / "best_global_model.pth.enc"
 
-        ckpt = load_model_checkpoint(model=target_model, filepath=best_path, device=device)
-        return target_model, ckpt
+        if best_path.exists():
+            ckpt = load_model_checkpoint(model=target_model, filepath=best_path, device=device)
+            return target_model, ckpt
+
+        if best_enc_path.exists() and self.encryption_manager:
+            return self.load_encrypted_checkpoint(best_enc_path, model=target_model, device=device)
+
+        raise FileNotFoundError(f"No best global checkpoint found at {best_path}")
 
     def load_round(
         self,
@@ -291,15 +396,116 @@ class GlobalModelManager:
         """
         target_model = model or self.model
         round_path = self.checkpoint_dir / f"global_model_round_{round_num:03d}.pth"
-        if not round_path.exists():
-            raise FileNotFoundError(f"Round checkpoint not found: {round_path}")
+        round_enc_path = self.checkpoint_dir / f"global_model_round_{round_num:03d}.pth.enc"
 
-        ckpt = load_model_checkpoint(model=target_model, filepath=round_path, device=device)
-        return target_model, ckpt
+        if round_path.exists():
+            ckpt = load_model_checkpoint(model=target_model, filepath=round_path, device=device)
+            return target_model, ckpt
+
+        if round_enc_path.exists() and self.encryption_manager:
+            return self.load_encrypted_checkpoint(round_enc_path, model=target_model, device=device)
+
+        raise FileNotFoundError(f"Round checkpoint not found: {round_path}")
+
+    def load_encrypted_checkpoint(
+        self,
+        filepath: Union[str, Path],
+        model: Optional[nn.Module] = None,
+        device: str = "cpu",
+    ) -> Tuple[nn.Module, Dict[str, Any]]:
+        """
+        Decrypt an encrypted .pth.enc checkpoint bundle in-memory and inject parameters into model.
+        Validates HMAC signature and AES-GCM authentication tag before applying parameters.
+        """
+        if not self.encryption_manager:
+            raise ValueError("Cannot load encrypted checkpoint: encryption manager is disabled.")
+
+        p = Path(filepath)
+        if not p.exists():
+            raise FileNotFoundError(f"Encrypted checkpoint not found: {p}")
+
+        target_model = model or self.model
+        with open(p, "rb") as f:
+            bundle_bytes = f.read()
+
+        state_dict, metadata = self.encryption_manager.decrypt_state_dict(bundle_bytes, device=device)
+        target_model.load_state_dict(state_dict)
+
+        ckpt_info = {
+            "round": metadata.round_num,
+            "metrics": {"dice_score": metadata.dice_score},
+            "encryption": {
+                "verified": True,
+                "cipher": metadata.cipher,
+                "key_id": metadata.key_id,
+            },
+        }
+        self.logger.info(
+            f"[ModelManager] Successfully decrypted & verified encrypted checkpoint: {p.name} "
+            f"(Round {metadata.round_num}, Key ID: {metadata.key_id})"
+        )
+        return target_model, ckpt_info
+
+    def verify_checkpoint_integrity(
+        self,
+        checkpoint_path: Union[str, Path],
+    ) -> Dict[str, Any]:
+        """
+        Verify the cryptographic integrity of an encrypted checkpoint file on disk.
+        """
+        if not self.encryption_manager:
+            return {"valid": False, "error": "Encryption manager is disabled."}
+        return self.encryption_manager.verify_bundle_integrity(checkpoint_path)
+
+    def rotate_encryption_key(
+        self,
+        new_key: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
+        """
+        Rotate the master encryption key and re-encrypt latest/best checkpoints.
+        """
+        if not self.encryption_manager:
+            raise ValueError("Encryption manager is not active.")
+
+        old_id = self.encryption_manager.key_id
+        _, new_id = self.encryption_manager.key_manager.rotate_key(new_key=new_key)
+
+        # Re-encrypt latest and best checkpoints with new key
+        latest_pth = self.checkpoint_dir / "global_model_latest.pth"
+        if latest_pth.exists():
+            self.encryption_manager.encrypt_checkpoint_file(
+                source_path=latest_pth,
+                target_path=self.checkpoint_dir / "global_model_latest.pth.enc",
+            )
+        best_pth = self.checkpoint_dir / "best_global_model.pth"
+        if best_pth.exists():
+            self.encryption_manager.encrypt_checkpoint_file(
+                source_path=best_pth,
+                target_path=self.checkpoint_dir / "best_global_model.pth.enc",
+            )
+
+        # Update metadata registry
+        registry = self.get_metadata()
+        if "encryption" in registry:
+            registry["encryption"]["key_id"] = new_id
+            registry["encryption"]["last_rotated"] = datetime.now(timezone.utc).isoformat()
+            self._write_metadata(registry)
+
+        self.logger.info(f"[ModelManager] Rotated encryption key: {old_id} -> {new_id}")
+        return {
+            "status": "KEY_ROTATED",
+            "old_key_id": old_id,
+            "new_key_id": new_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
     def list_round_checkpoints(self) -> List[Path]:
         """Return sorted list of round-specific checkpoint files."""
         return sorted(list(self.checkpoint_dir.glob("global_model_round_*.pth")))
+
+    def list_encrypted_checkpoints(self) -> List[Path]:
+        """Return sorted list of encrypted round-specific checkpoint files."""
+        return sorted(list(self.checkpoint_dir.glob("global_model_round_*.pth.enc")))
 
     def _cleanup_old_round_checkpoints(self) -> None:
         """Enforce keep_last_n limit on intermediate round checkpoints."""
@@ -307,6 +513,16 @@ class GlobalModelManager:
         if len(round_files) > self.keep_last_n:
             to_delete = round_files[:-self.keep_last_n]
             for f in to_delete:
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+
+        # Also cleanup old encrypted checkpoints
+        enc_files = self.list_encrypted_checkpoints()
+        if len(enc_files) > self.keep_last_n:
+            to_delete_enc = enc_files[:-self.keep_last_n]
+            for f in to_delete_enc:
                 try:
                     f.unlink()
                 except Exception:

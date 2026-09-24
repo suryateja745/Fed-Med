@@ -206,6 +206,53 @@ class TestGlobalModelManager(unittest.TestCase):
         self.assertAlmostEqual(entry["global_dice_score"], 0.88, places=4)
         self.assertEqual(entry["metrics"]["val_dice_tc"], 0.85)
 
+    def test_encrypted_checkpoint_saving_and_loading(self):
+        """Test that GlobalModelManager automatically saves and loads encrypted checkpoints."""
+        self.assertTrue(self.manager.enable_encryption)
+        self.assertIsNotNone(self.manager.encryption_manager)
+
+        self.manager.save_round_checkpoint(
+            round_num=1,
+            model=self.model,
+            metrics={"val_dice_mean": 0.82},
+            participating_clients=["hosp_a"],
+        )
+
+        # Verify .pth.enc files exist
+        round_enc = self.checkpoint_dir / "global_model_round_001.pth.enc"
+        latest_enc = self.checkpoint_dir / "global_model_latest.pth.enc"
+        best_enc = self.checkpoint_dir / "best_global_model.pth.enc"
+
+        self.assertTrue(round_enc.exists())
+        self.assertTrue(latest_enc.exists())
+        self.assertTrue(best_enc.exists())
+
+        # Test loading encrypted checkpoint into fresh model
+        fresh_model = self._create_model()
+        loaded_model, ckpt_info = self.manager.load_encrypted_checkpoint(round_enc, model=fresh_model)
+        self.assertEqual(ckpt_info["round"], 1)
+        self.assertTrue(ckpt_info["encryption"]["verified"])
+
+    def test_encrypted_checkpoint_integrity_verification(self):
+        """Test verifying cryptographic integrity of checkpoint files."""
+        self.manager.save_round_checkpoint(
+            round_num=1,
+            model=self.model,
+            metrics={"val_dice_mean": 0.85},
+        )
+        round_enc = self.checkpoint_dir / "global_model_round_001.pth.enc"
+        ver = self.manager.verify_checkpoint_integrity(round_enc)
+        self.assertTrue(ver["valid"])
+        self.assertEqual(ver["status"], "VERIFIED")
+
+    def test_key_rotation_in_model_manager(self):
+        """Test key rotation through GlobalModelManager."""
+        old_key_id = self.manager.encryption_manager.key_id
+        res = self.manager.rotate_encryption_key()
+        self.assertEqual(res["status"], "KEY_ROTATED")
+        self.assertEqual(res["old_key_id"], old_key_id)
+        self.assertNotEqual(res["new_key_id"], old_key_id)
+
 
 if __name__ == "__main__":
     unittest.main()
