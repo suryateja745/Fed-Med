@@ -98,11 +98,28 @@ def main() -> None:
             assert r_hosp.status_code == 200, f"Hospitals returned {r_hosp.status_code}"
             logger.info(f"  [✓] Hospital registry verified ({len(r_hosp.json())} nodes detected)")
 
-            logger.info("[Dry Run] All backend routes validated successfully! (0 Errors)")
+            # Test database & JWT authentication
+            r_login = client.post("/api/auth/login", json={"username": "admin", "password": "Admin@FedMed2026!"})
+            assert r_login.status_code == 200, f"Auth login failed: {r_login.text}"
+            token = r_login.json()["access_token"]
+            logger.info("  [✓] Database & JWT login verified (Admin user authenticated)")
+
+            # Test authenticated /me
+            r_me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+            assert r_me.status_code == 200, f"Auth /me failed: {r_me.text}"
+            logger.info(f"  [✓] RBAC Profile verified: {r_me.json()['username']} ({r_me.json()['role']})")
+
+            # Test hospital node registry
+            r_nodes = client.get("/api/auth/nodes")
+            assert r_nodes.status_code == 200, f"Auth nodes failed: {r_nodes.text}"
+            logger.info(f"  [✓] Database Hospital Nodes verified ({r_nodes.json()['total']} registered nodes)")
+
+            logger.info("[Dry Run] All backend routes and database schemas validated successfully! (0 Errors)")
             return
         except Exception as e:
             logger.error(f"[Dry Run] Route validation failed: {e}")
             sys.exit(1)
+
 
     if not HAS_UVICORN:
         logger.error("Uvicorn is required to run the FedMed backend server. Please install uvicorn.")

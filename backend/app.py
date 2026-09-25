@@ -12,8 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import BackendConfig, get_backend_config
+from backend.database import init_db
 from backend.dependencies import BackendServices
 from backend.routes import (
+    auth_router,
     control_router,
     federation_router,
     hospitals_router,
@@ -32,10 +34,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cfg = app.state.config
     logger.info("=" * 65)
     logger.info("  Starting FedMed Backend Server")
+    logger.info(f"  * Database       : {cfg.database_url}")
     logger.info(f"  * Checkpoint Dir : {cfg.checkpoint_dir.resolve()}")
     logger.info(f"  * Logs & Feeds   : {cfg.logs_dir.resolve()}")
     logger.info(f"  * API Docs       : /docs and /redoc")
     logger.info("=" * 65)
+
+    # Initialize relational database schemas and default seed accounts
+    init_db()
 
     # Initialize backend services singleton
     services = BackendServices.get_instance(cfg)
@@ -76,6 +82,7 @@ def create_app(config: BackendConfig = None) -> FastAPI:
 
     # Mount API Routers
     api_prefix = cfg.api_prefix
+    app.include_router(auth_router, prefix=api_prefix)
     app.include_router(federation_router, prefix=api_prefix)
     app.include_router(hospitals_router, prefix=api_prefix)
     app.include_router(models_router, prefix=api_prefix)
@@ -93,6 +100,10 @@ def create_app(config: BackendConfig = None) -> FastAPI:
             "docs": "/docs",
             "redoc": "/redoc",
             "api_endpoints": {
+                "auth_login": f"{api_prefix}/auth/login",
+                "auth_register": f"{api_prefix}/auth/register",
+                "auth_me": f"{api_prefix}/auth/me",
+                "auth_nodes": f"{api_prefix}/auth/nodes",
                 "dashboard": f"{api_prefix}/federation/dashboard",
                 "hospitals": f"{api_prefix}/hospitals",
                 "models": f"{api_prefix}/models/global",
@@ -102,6 +113,7 @@ def create_app(config: BackendConfig = None) -> FastAPI:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+
 
     @app.get("/health", tags=["Health"])
     def health():

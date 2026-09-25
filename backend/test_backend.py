@@ -32,13 +32,18 @@ class TestBackendAPI(unittest.TestCase):
 
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.db_path = Path(self.temp_dir) / "test_fedmed.db"
 
         self.config = BackendConfig(
             checkpoint_dir=self.checkpoint_dir,
             logs_dir=self.logs_dir,
             data_dir=self.data_dir,
+            database_url=f"sqlite:///{self.db_path}",
         )
+
+        import backend.database as db_mod
+        db_mod._engine = None
+        db_mod._SessionFactory = None
 
         # Reset singleton instance for isolated test
         BackendServices._instance = None
@@ -47,8 +52,12 @@ class TestBackendAPI(unittest.TestCase):
 
     def tearDown(self):
         BackendServices._instance = None
+        import backend.database as db_mod
+        db_mod._engine = None
+        db_mod._SessionFactory = None
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir, ignore_errors=True)
+
 
     def test_root_and_health_endpoints(self):
         """Test GET / and GET /health."""

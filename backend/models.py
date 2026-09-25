@@ -209,3 +209,68 @@ class SimulationTriggerResponse(BaseModel):
     num_rounds: int
     partition_type: str
     timestamp: str
+
+
+# 6. Database & Authentication Models
+
+class UserRegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64, description="Alphanumeric username")
+    email: str = Field(..., description="Valid institutional email address")
+    password: str = Field(..., min_length=6, description="Account password")
+    role: str = Field("HOSPITAL_STAFF", description="User role: ADMIN, HOSPITAL_STAFF, AUDITOR")
+    institution_name: str = Field("General Hospital", description="Full institutional name")
+    hospital_node_id: Optional[str] = Field(None, description="Optional linked node ID (e.g. NODE-HOSP-A)")
+
+
+class UserLoginRequest(BaseModel):
+    username: str = Field(..., description="Username or email")
+    password: str = Field(..., description="Account password")
+
+
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str = Field(..., description="Valid refresh JWT token")
+
+
+class UserProfileResponse(BaseModel):
+    id: int
+    user_id: str
+    username: str
+    email: str
+    role: str
+    institution_name: str
+    hospital_node_id: Optional[str] = None
+    is_active: bool = True
+    created_at: Optional[str] = None
+    last_login_at: Optional[str] = None
+
+
+class AuthTokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in_seconds: int
+    user: UserProfileResponse
+
+
+class HospitalNodeCreateRequest(BaseModel):
+    node_id: str = Field(..., description="Unique node identifier (e.g. NODE-HOSP-D)")
+    hospital_name: str = Field(..., description="Institutional legal name")
+    region: str = Field("Global", description="Geographic location")
+    gpu_device: str = Field("NVIDIA RTX 4090", description="Compute hardware model")
+    vram_gb: float = Field(24.0, description="Available GPU VRAM in GB")
+    cpu_cores: int = Field(16, description="Host CPU cores")
+    dataset_path: str = Field("./data/hospital_x", description="Local private dataset directory path")
+    local_sample_count: int = Field(0, description="Discovered local MRI scans count")
+
+
+class AuditLogResponse(BaseModel):
+    id: int
+    timestamp: str
+    actor_id: str
+    actor_role: str
+    action: str
+    target_resource: str
+    client_ip: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+    is_tamper_flagged: bool = False
+

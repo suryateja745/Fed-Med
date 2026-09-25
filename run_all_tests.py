@@ -51,7 +51,10 @@ TEST_MODULES = [
     ("Global Model Weight Encryption", "federation.security.test_global_encryption"),
     # 16. Complete FastAPI Backend & Telemetry Routes
     ("Production FastAPI Backend", "backend.test_backend"),
+    # 17. Relational Database, JWT Auth & RBAC
+    ("Relational DB & JWT RBAC Auth", "backend.test_auth_db"),
 ]
+
 
 
 def run_master_test_suite() -> bool:
