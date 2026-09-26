@@ -28,3 +28,5 @@ def health():
 @app.get("/api/training/status")
 def training_status():
     return get_training_state()
+
+FEDMED_BUILD = "2026-09-26"
