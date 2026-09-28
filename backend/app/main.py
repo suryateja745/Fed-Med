@@ -30,3 +30,5 @@ def training_status():
     return get_training_state()
 
 FEDMED_BUILD = "2026-09-26"
+
+# FedMed backend build: 2026-09-28
