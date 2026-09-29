@@ -1,36 +1,54 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
-import { Card } from "../components/common/Card";
-import { Button } from "../components/common/Button";
-import { Input } from "../components/common/Input";
-import { Badge } from "../components/common/Badge";
-import { IconUser, IconLock, IconShieldCheck, IconHospital } from "../components/common/Icons";
+import { IconUser, IconLock } from "../components/common/Icons";
 
 export function AuthPage({ onNavigate }) {
   const { login, register, isAuthenticated, user, logout } = useAuth();
   const [tab, setTab] = useState("login"); // 'login' | 'register'
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [email, setEmail] = useState("");
-  const [institutionName, setInstitutionName] = useState("");
-  const [role, setRole] = useState("HOSPITAL_STAFF");
-  const [hospitalNodeId, setHospitalNodeId] = useState("NODE-HOSP-A");
+
+  // Set page document title when inside Authentication Portal
+  useEffect(() => {
+    const prevTitle = document.title;
+    document.title = "Authentication Portal";
+    return () => {
+      document.title = prevTitle;
+    };
+  }, []);
+
+  // Login form state
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  // Register form state: name | username | password | confirm password | role (hospital or coordinator)
+  const [regName, setRegName] = useState("");
+  const [regUsername, setRegUsername] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [regConfirmPassword, setRegConfirmPassword] = useState("");
+  const [regRole, setRegRole] = useState("HOSPITAL_STAFF"); // 'HOSPITAL_STAFF' (hospital) | 'ADMIN' (coordinator)
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const handleLogin = async (e) => {
     e?.preventDefault();
     setError("");
+
+    if (!loginUsername.trim() || !loginPassword) {
+      setError("Please enter your username and password.");
+      return;
+    }
+
     setLoading(true);
     try {
-      const loggedUser = await login(username, password);
+      const loggedUser = await login(loginUsername.trim(), loginPassword);
+      // Query the database for existing credential and redirect to respective windows
       if (loggedUser.role === "ADMIN") {
         onNavigate("coordinator");
       } else {
         onNavigate("hospital");
       }
     } catch (err) {
-      setError(err.message || "Login failed");
+      setError(err.message || "Invalid credentials. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -39,252 +57,437 @@ export function AuthPage({ onNavigate }) {
   const handleRegister = async (e) => {
     e?.preventDefault();
     setError("");
+
+    if (!regName.trim() || !regUsername.trim() || !regPassword) {
+      setError("Please fill in all required fields.");
+      return;
+    }
+
+    if (regPassword.length < 6) {
+      setError("Password must be at least 6 characters long.");
+      return;
+    }
+
+    if (regPassword !== regConfirmPassword) {
+      setError("Passwords do not match. Please verify.");
+      return;
+    }
+
     setLoading(true);
     try {
+      const cleanUsername = regUsername.trim().toLowerCase();
+      const generatedEmail = `${cleanUsername}@fedmed.org`;
+
       const registered = await register({
-        username,
-        email,
-        password,
-        role,
-        institution_name: institutionName || "General Hospital",
-        hospital_node_id: role === "HOSPITAL_STAFF" ? hospitalNodeId : null,
+        username: regUsername.trim(),
+        email: generatedEmail,
+        password: regPassword,
+        role: regRole,
+        institution_name: regName.trim(),
+        hospital_node_id: regRole === "HOSPITAL_STAFF" ? `NODE-${cleanUsername.toUpperCase().slice(0, 8)}` : null,
       });
+
+      // Redirect to respective windows after successful registration
       if (registered.role === "ADMIN") {
         onNavigate("coordinator");
       } else {
         onNavigate("hospital");
       }
     } catch (err) {
-      setError(err.message || "Registration failed");
+      setError(err.message || "Registration failed. Username may already exist.");
     } finally {
       setLoading(false);
     }
   };
 
-  const autofillCredentials = (u, p) => {
-    setUsername(u);
-    setPassword(p);
-    setError("");
-  };
-
-  if (isAuthenticated && user) {
-    return (
-      <div className="content-narrow" style={{ paddingTop: "2rem" }}>
-        <Card title="Active User Session" icon={<IconUser size={20} />}>
-          <div className="flex-col gap-4">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <h3 style={{ fontSize: "1.3rem" }}>{user.username}</h3>
-                <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>{user.email}</p>
-                <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem" }}>
-                  <Badge variant="cyan">{user.role}</Badge>
-                  {user.hospital_node_id && <Badge variant="emerald">{user.hospital_node_id}</Badge>}
-                </div>
-              </div>
-              <Button variant="danger" size="sm" onClick={logout}>
-                Sign Out
-              </Button>
-            </div>
-
-            <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "1rem" }}>
-              <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>
-                Institution: <strong>{user.institution_name}</strong>
-              </p>
-              <div style={{ display: "flex", gap: "1rem" }}>
-                {user.role === "ADMIN" ? (
-                  <Button variant="glow" onClick={() => onNavigate("coordinator")}>
-                    Open Coordinator Dashboard
-                  </Button>
-                ) : (
-                  <Button variant="glow" onClick={() => onNavigate("hospital")}>
-                    Open Hospital Node Portal
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   return (
-    <div className="content-narrow" style={{ paddingTop: "2rem" }}>
-      <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-        <Badge variant="cyan" pulse style={{ marginBottom: "0.75rem" }}>
-          FedMed Zero-Trust Access
-        </Badge>
-        <h2>Institutional Authentication Portal</h2>
-        <p style={{ color: "var(--text-muted)", marginTop: "0.4rem" }}>
-          Role-based segregation for Central Flower Coordinators, Hospital Clinicians, and Clinical Auditors.
-        </p>
-      </div>
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100vw",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "var(--bg-primary, #ffffff)",
+        padding: "1rem",
+        boxSizing: "border-box",
+        position: "relative",
+      }}
+    >
+      {/* Back to Home Link */}
+      <button
+        type="button"
+        onClick={() => onNavigate("home")}
+        style={{
+          position: "absolute",
+          top: "1.25rem",
+          left: "1.5rem",
+          background: "none",
+          border: "none",
+          color: "var(--text-muted, #64748b)",
+          cursor: "pointer",
+          fontSize: "0.88rem",
+          fontWeight: 500,
+          display: "flex",
+          alignItems: "center",
+          gap: "0.4rem",
+          padding: "0.4rem 0.6rem",
+          borderRadius: "var(--radius-sm, 6px)",
+          transition: "all var(--transition-fast, 150ms)",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.color = "var(--text-primary, #0f172a)";
+          e.currentTarget.style.background = "var(--bg-subtle, #f1f5f9)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.color = "var(--text-muted, #64748b)";
+          e.currentTarget.style.background = "none";
+        }}
+      >
+        &larr; Back to Home
+      </button>
 
-      <Card glow="cyan">
-        {/* Tab Switcher */}
-        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "0.75rem" }}>
-          <Button
-            variant={tab === "login" ? "primary" : "outline"}
-            size="sm"
-            onClick={() => { setTab("login"); setError(""); }}
-          >
-            Institutional Sign In
-          </Button>
-          <Button
-            variant={tab === "register" ? "primary" : "outline"}
-            size="sm"
-            onClick={() => { setTab("register"); setError(""); }}
-          >
-            Register Hospital Node
-          </Button>
-        </div>
-
-        {error && (
-          <div
+      {/* Main Container Card */}
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "400px",
+          background: "#ffffff",
+          border: "1px solid var(--border-subtle, #e2e8f0)",
+          borderRadius: "var(--radius-xl, 20px)",
+          padding: "2rem",
+          boxShadow: "0 10px 30px -10px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {/* Title */}
+        <div style={{ textAlign: "center", marginBottom: "1.25rem" }}>
+          <h1
             style={{
-              background: "var(--crimson-subtle)",
-              color: "var(--crimson-primary)",
-              padding: "0.75rem 1rem",
-              borderRadius: "var(--radius-md)",
-              marginBottom: "1.25rem",
-              fontSize: "0.85rem",
-              border: "1px solid rgba(239, 68, 68, 0.3)",
+              fontFamily: "var(--font-heading, sans-serif)",
+              fontSize: "1.65rem",
+              fontWeight: 800,
+              color: "var(--text-primary, #0f172a)",
+              letterSpacing: "-0.03em",
+              margin: 0,
             }}
           >
-            {error}
-          </div>
-        )}
+            Authentication Portal
+          </h1>
+        </div>
 
-        {tab === "login" ? (
-          <form onSubmit={handleLogin} className="flex-col gap-2">
-            <Input
-              label="Username or Email"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. admin or hosp_a_lead"
-              required
-              icon={<IconUser size={18} />}
-            />
-
-            <Input
-              label="Password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••••"
-              required
-              icon={<IconLock size={18} />}
-            />
-
-            <Button
-              type="submit"
-              variant="glow"
-              loading={loading}
-              style={{ width: "100%", marginTop: "1rem" }}
+        {/* If user is already authenticated */}
+        {isAuthenticated && user ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "0.85rem 1rem",
+                background: "var(--bg-subtle, #f8fafc)",
+                borderRadius: "var(--radius-md, 12px)",
+                border: "1px solid var(--border-subtle, #e2e8f0)",
+              }}
             >
-              Sign In to Medical Workspace
-            </Button>
-          </form>
-        ) : (
-          <form onSubmit={handleRegister} className="flex-col gap-2">
-            <Input
-              label="Choose Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. dr_meredith"
-              required
-              icon={<IconUser size={18} />}
-            />
-
-            <Input
-              label="Institutional Email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="lead@hospital.org"
-              required
-              icon={<IconHospital size={18} />}
-            />
-
-            <Input
-              label="Institution Legal Name"
-              value={institutionName}
-              onChange={(e) => setInstitutionName(e.target.value)}
-              placeholder="Mount Sinai Health System"
-              required
-            />
-
-            <div className="form-group">
-              <label className="form-label">Role Assignment</label>
-              <select
-                className="form-select"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
+              <div>
+                <div style={{ fontSize: "0.72rem", color: "var(--text-muted, #64748b)", textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "var(--font-mono, monospace)" }}>
+                  Signed in as
+                </div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary, #0f172a)" }}>
+                  {user.username}
+                </div>
+              </div>
+              <span
+                style={{
+                  fontSize: "0.72rem",
+                  fontFamily: "var(--font-mono, monospace)",
+                  padding: "0.2rem 0.55rem",
+                  borderRadius: "9999px",
+                  background: user.role === "ADMIN" ? "var(--brand-blue-subtle, #e8f0fe)" : "var(--emerald-subtle, #ecfdf5)",
+                  color: user.role === "ADMIN" ? "var(--brand-blue, #1a73e8)" : "var(--emerald-light, #059669)",
+                  border: `1px solid ${user.role === "ADMIN" ? "var(--brand-blue-border, #d2e3fc)" : "var(--emerald-border, #a7f3d0)"}`,
+                  fontWeight: 600,
+                }}
               >
-                <option value="HOSPITAL_STAFF">Hospital Node Clinician (Local Training)</option>
-                <option value="ADMIN">Central Flower Coordinator Admin</option>
-                <option value="AUDITOR">Clinical Quality & Ethics Auditor</option>
-              </select>
+                {user.role === "ADMIN" ? "Coordinator" : "Hospital"}
+              </span>
             </div>
 
-            <Input
-              label="Password (min 6 characters)"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••••••"
-              required
-              icon={<IconLock size={18} />}
-            />
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              {user.role === "ADMIN" ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => onNavigate("coordinator")}
+                  style={{ width: "100%", padding: "0.65rem", fontSize: "0.9rem" }}
+                >
+                  Go to Coordinator Window &rarr;
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => onNavigate("hospital")}
+                  style={{ width: "100%", padding: "0.65rem", fontSize: "0.9rem" }}
+                >
+                  Go to Hospital Window &rarr;
+                </button>
+              )}
 
-            <Button
-              type="submit"
-              variant="primary"
-              loading={loading}
-              style={{ width: "100%", marginTop: "1rem" }}
-            >
-              Provision Account & Generate Keys
-            </Button>
-          </form>
-        )}
-
-        {/* Quick Demo Credentials Autofill */}
-        <div style={{ marginTop: "1.75rem", paddingTop: "1.25rem", borderTop: "1px solid var(--border-subtle)" }}>
-          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-            1-Click Demo Accounts (Database Pre-Seeded):
-          </p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => autofillCredentials("admin", "Admin@FedMed2026!")}
-            >
-              Coordinator Admin
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => autofillCredentials("hosp_a_lead", "HospA@FedMed2026!")}
-            >
-              Hospital A (Mt. Sinai)
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => autofillCredentials("hosp_b_lead", "HospB@FedMed2026!")}
-            >
-              Hospital B (Hopkins)
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => autofillCredentials("auditor", "Audit@FedMed2026!")}
-            >
-              Auditor
-            </Button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={logout}
+                style={{ width: "100%", padding: "0.55rem", fontSize: "0.85rem" }}
+              >
+                Sign Out
+              </button>
+            </div>
           </div>
-        </div>
-      </Card>
+        ) : (
+          <>
+            {/* Two Options: Login and Register */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "0.25rem",
+                padding: "0.25rem",
+                background: "var(--bg-subtle, #f1f5f9)",
+                borderRadius: "var(--radius-md, 10px)",
+                marginBottom: "1.25rem",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setTab("login");
+                  setError("");
+                }}
+                style={{
+                  padding: "0.48rem 0.75rem",
+                  borderRadius: "var(--radius-sm, 7px)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "0.88rem",
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans, sans-serif)",
+                  background: tab === "login" ? "#ffffff" : "transparent",
+                  color: tab === "login" ? "var(--text-primary, #0f172a)" : "var(--text-muted, #64748b)",
+                  boxShadow: tab === "login" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+                  transition: "all var(--transition-fast, 150ms)",
+                }}
+              >
+                Login
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setTab("register");
+                  setError("");
+                }}
+                style={{
+                  padding: "0.48rem 0.75rem",
+                  borderRadius: "var(--radius-sm, 7px)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "0.88rem",
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans, sans-serif)",
+                  background: tab === "register" ? "#ffffff" : "transparent",
+                  color: tab === "register" ? "var(--text-primary, #0f172a)" : "var(--text-muted, #64748b)",
+                  boxShadow: tab === "register" ? "0 1px 3px rgba(0,0,0,0.06)" : "none",
+                  transition: "all var(--transition-fast, 150ms)",
+                }}
+              >
+                Register
+              </button>
+            </div>
+
+            {/* Error message */}
+            {error && (
+              <div
+                style={{
+                  background: "var(--coral-subtle, #fef2f2)",
+                  color: "var(--coral-primary, #ef4444)",
+                  border: "1px solid var(--coral-border, #fecaca)",
+                  padding: "0.55rem 0.75rem",
+                  borderRadius: "var(--radius-sm, 8px)",
+                  marginBottom: "0.9rem",
+                  fontSize: "0.82rem",
+                  lineHeight: 1.4,
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            {/* 1. LOGIN FORM */}
+            {tab === "login" ? (
+              <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.82rem", marginBottom: "0.3rem" }}>Username</label>
+                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <span
+                      style={{
+                        position: "absolute",
+                        left: "0.85rem",
+                        color: "var(--text-faint, #94a3b8)",
+                        display: "flex",
+                        alignItems: "center",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <IconUser size={16} />
+                    </span>
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ paddingLeft: "2.4rem", paddingBlock: "0.55rem", fontSize: "0.9rem" }}
+                      placeholder="Enter username"
+                      value={loginUsername}
+                      onChange={(e) => setLoginUsername(e.target.value)}
+                      autoComplete="username"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.82rem", marginBottom: "0.3rem" }}>Password</label>
+                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <span
+                      style={{
+                        position: "absolute",
+                        left: "0.85rem",
+                        color: "var(--text-faint, #94a3b8)",
+                        display: "flex",
+                        alignItems: "center",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      <IconLock size={16} />
+                    </span>
+                    <input
+                      type="password"
+                      className="form-input"
+                      style={{ paddingLeft: "2.4rem", paddingBlock: "0.55rem", fontSize: "0.9rem" }}
+                      placeholder="Enter password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      autoComplete="current-password"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={loading}
+                  style={{
+                    width: "100%",
+                    padding: "0.68rem",
+                    fontSize: "0.92rem",
+                    marginTop: "0.35rem",
+                  }}
+                >
+                  {loading ? "Authenticating..." : "Login"}
+                </button>
+              </form>
+            ) : (
+              /* 2. REGISTER FORM: Name | Username | Role | Password | Confirm Password */
+              <form onSubmit={handleRegister} style={{ display: "flex", flexDirection: "column", gap: "0.68rem" }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.78rem", marginBottom: "0.2rem" }}>Name</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    style={{ paddingBlock: "0.45rem", fontSize: "0.86rem" }}
+                    placeholder="Full name or institution"
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.78rem", marginBottom: "0.2rem" }}>Username</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    style={{ paddingBlock: "0.45rem", fontSize: "0.86rem" }}
+                    placeholder="Choose username"
+                    value={regUsername}
+                    onChange={(e) => setRegUsername(e.target.value)}
+                    autoComplete="username"
+                    required
+                  />
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.78rem", marginBottom: "0.2rem" }}>Role</label>
+                  <select
+                    className="form-input"
+                    value={regRole}
+                    onChange={(e) => setRegRole(e.target.value)}
+                    style={{ paddingBlock: "0.45rem", fontSize: "0.86rem", cursor: "pointer" }}
+                  >
+                    <option value="HOSPITAL_STAFF">Hospital</option>
+                    <option value="ADMIN">Coordinator</option>
+                  </select>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.78rem", marginBottom: "0.2rem" }}>Password</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    style={{ paddingBlock: "0.45rem", fontSize: "0.86rem" }}
+                    placeholder="Min 6 characters"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label" style={{ fontSize: "0.78rem", marginBottom: "0.2rem" }}>Confirm Password</label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    style={{ paddingBlock: "0.45rem", fontSize: "0.86rem" }}
+                    placeholder="Confirm password"
+                    value={regConfirmPassword}
+                    onChange={(e) => setRegConfirmPassword(e.target.value)}
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={loading}
+                  style={{
+                    width: "100%",
+                    padding: "0.62rem",
+                    fontSize: "0.9rem",
+                    marginTop: "0.35rem",
+                  }}
+                >
+                  {loading ? "Creating Account..." : "Register"}
+                </button>
+              </form>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
