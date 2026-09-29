@@ -105,6 +105,15 @@ export function IconPlay({ className = "", size = 20 }) {
   );
 }
 
+export function IconPause({ className = "", size = 20 }) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect width="4" height="16" x="6" y="4" />
+      <rect width="4" height="16" x="14" y="4" />
+    </svg>
+  );
+}
+
 export function IconRefreshCw({ className = "", size = 20 }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

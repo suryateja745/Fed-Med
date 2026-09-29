@@ -7,6 +7,9 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    fs: {
+      allow: ["..", "C:/Users/ASUS/.gemini/antigravity-ide/brain/935aba3a-aaa0-4174-95e7-849c96726697"],
+    },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8000",

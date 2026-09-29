@@ -7,7 +7,7 @@ import { AuthPage } from "./pages/AuthPage";
 import { CoordinatorDashboard } from "./pages/CoordinatorDashboard";
 import { HospitalPortal } from "./pages/HospitalPortal";
 import { SimulationPage } from "./pages/SimulationPage";
-import { DesignSandbox } from "./pages/DesignSandbox";
+import { AboutUsPage } from "./pages/AboutUsPage";
 import { api } from "./services/api";
 
 function AppContent() {
@@ -45,6 +45,7 @@ function AppContent() {
       {/* Main Content View Switcher */}
       <main className="main-content">
         {activeTab === "home" && <LandingPage onNavigate={setActiveTab} />}
+        {activeTab === "about" && <AboutUsPage onNavigate={setActiveTab} />}
         {activeTab === "auth" && <AuthPage onNavigate={setActiveTab} />}
         {activeTab === "coordinator" && <CoordinatorDashboard />}
         {activeTab === "hospital" && <HospitalPortal />}
@@ -53,7 +54,7 @@ function AppContent() {
       </main>
 
       {/* Footer */}
-      <Footer />
+      <Footer onNavigate={setActiveTab} />
     </div>
   );
 }
