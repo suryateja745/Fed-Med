@@ -66,8 +66,8 @@ function AppContent() {
         {activeTab === "home" && <LandingPage onNavigate={setActiveTab} />}
         {activeTab === "about" && <AboutUsPage onNavigate={setActiveTab} />}
         {activeTab === "auth" && <AuthPage onNavigate={setActiveTab} />}
-        {activeTab === "coordinator" && <CoordinatorDashboard />}
-        {activeTab === "hospital" && <HospitalPortal />}
+        {activeTab === "coordinator" && <CoordinatorDashboard onNavigate={setActiveTab} />}
+        {activeTab === "hospital" && <HospitalPortal onNavigate={setActiveTab} />}
         {activeTab === "simulation" && <SimulationPage />}
       </main>
 
