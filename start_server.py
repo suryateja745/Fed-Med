@@ -51,6 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logs-dir", type=str, default="./logs", help="Path to store log files and JSON feeds")
     parser.add_argument("--dry-run", action="store_true", help="Execute server initialization self-test and exit")
     parser.add_argument("--export-dashboard", action="store_true", default=True, help="Periodically export live dashboard JSON")
+    parser.add_argument("--no-encryption", action="store_true", help="Disable global model weight encryption at rest")
+    parser.add_argument("--encryption-key", type=str, default=None, help="Path to custom symmetric encryption key")
 
     return parser.parse_args()
 
@@ -100,6 +102,7 @@ def main() -> None:
         model=model,
         config=config,
         export_best=True,
+        enable_encryption=not args.no_encryption,
     )
 
     # 2. Initialize API Bridge & Export Initial Dashboard State

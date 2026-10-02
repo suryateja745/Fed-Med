@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-10-02T09:24:38.438403+00:00",
+  "num_clients": 3,
+  "num_rounds": 1,
+  "partition_type": "quantity_skew",
+  "best_dice": 0.0254,
+  "best_round": 1,
+  "final_metrics": {
+    "train_loss": 1.0543333333333333,
+    "val_loss": 1.018675,
+    "val_dice_mean": 0.0254
+  },
+  "history": {
+    "rounds": [
+      1
+    ],
+    "train_loss": [
+      1.0543333333333333
+    ],
+    "val_loss": [
+      1.018675
+    ],
+    "val_dice_mean": [
+      0.0254
+    ],
+    "val_dice_tc": [
+      0.02
+    ],
+    "val_dice_wt": [
+      0.0534
+    ],
+    "val_dice_et": [
+      0.0027
+    ]
+  },
+  "plots": {
+    "round_vs_dice": "reports\\round_vs_dice.png",
+    "round_vs_loss": "reports\\round_vs_loss.png"
+  }
+}

@@ -58,6 +58,10 @@ class DispatchAuditEvent:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = "SUCCESS"
     client_info: Dict[str, Any] = field(default_factory=dict)
+    encrypted: bool = False
+    cipher: str = "NONE"
+    key_id: Optional[str] = None
+    hmac_sha256: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -172,6 +176,54 @@ class AutoDispatchTrigger:
         }
 
         return model_weights, metadata
+
+    def get_encrypted_dispatch_payload(
+        self,
+        hospital_id: str,
+        client_info: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[bytes, Dict[str, Any]]:
+        """
+        Serve an authenticated AES-256-GCM encrypted model bundle with HMAC-SHA256 signature
+        to an authorized hospital client.
+        """
+        params, metadata = self.handle_client_connect(hospital_id, client_info)
+        enc_mgr = getattr(self.model_manager, "encryption_manager", None)
+        if enc_mgr is not None:
+            enc_bundle = enc_mgr.encrypt_parameters(
+                parameters=params,
+                round_num=metadata.get("round_num"),
+                dice_score=metadata.get("dice_score"),
+            )
+            metadata["encrypted"] = True
+            metadata["cipher"] = "AES-256-GCM"
+            metadata["key_id"] = enc_mgr.key_id
+            metadata["hmac_sha256"] = enc_bundle[-32:].hex()
+            metadata["bundle_size_bytes"] = len(enc_bundle)
+
+            # Record encrypted dispatch in audit log
+            audit_event = DispatchAuditEvent(
+                event_id=f"disp_enc_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hospital_id}",
+                hospital_id=hospital_id,
+                model_version=metadata.get("model_version", "unknown"),
+                checkpoint_path=metadata.get("checkpoint_path", ""),
+                round_num=metadata.get("round_num"),
+                dice_score=metadata.get("dice_score"),
+                status="SUCCESS_ENCRYPTED",
+                client_info=client_info or {},
+                encrypted=True,
+                cipher="AES-256-GCM",
+                key_id=enc_mgr.key_id,
+                hmac_sha256=enc_bundle[-32:].hex(),
+            )
+            self._record_audit_log(audit_event)
+            return enc_bundle, metadata
+
+        # Fallback unencrypted serialization
+        import io
+        buf = io.BytesIO()
+        np.savez_compressed(buf, **{f"arr_{i}": a for i, a in enumerate(params)})
+        metadata["encrypted"] = False
+        return buf.getvalue(), metadata
 
     def _resolve_global_weights(
         self,

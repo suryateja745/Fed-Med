@@ -177,61 +177,98 @@ bridge.export_dashboard_json("./logs/fedmed_live_dashboard.json")
 ## ⚙️ Concurrency & Triggers
 
 - **`RoundSyncManager` (`federation/server/sync_manager.py`)**: Re-entrant mutex (`threading.RLock`) protects parameter ingestion from simultaneous client uploads and rejects stale parameters from completed rounds.
-- **`AutoDispatchTrigger` (`federation/server/triggers.py`)**: Streams `best_global_model.pth` or preset baseline weights to connecting clients when the admin is offline.
-- **`AutoAggregateTrigger` (`federation/server/triggers.py`)**: Automatically triggers `FedMedStrategy.aggregate_fit()` and saves `global_model_round_X.pth` once the required hospital quota is reached.
+- **`AutoDispatchTrigger` (`federation/server/triggers.py`)**: Streams `best_global_model.pth` or preset baseline weights to connecting clients when the admin is offline. Supports authenticated AES-256-GCM encrypted payload streaming.
+- **`AutoAggregateTrigger` (`federation/server/triggers.py`)**: Automatically triggers `FedMedStrategy.aggregate_fit()`, saves encrypted checkpoints (`global_model_round_X.pth.enc`), and publishes round events once client upload quota is reached.
 
 ---
 
-## 🌐 Frontend & Backend Integration
+## 🔒 Global Model Weight Encryption & Key Management
 
-### Backend API Route (FastAPI Example)
-```python
-from fastapi import FastAPI
-from federation.api_bridge import FedMedAPIBridge
+FedMed implements zero-trust authenticated encryption at rest and in transit:
+1. **AES-256-GCM Authenticated Encryption**: 256-bit symmetric cipher in Galois/Counter Mode with 12-byte random nonces and 16-byte authentication tags.
+2. **HMAC-SHA256 Model Signatures**: Digital signatures computed over ciphertext and metadata headers; tampering with any single bit raises `CryptographicIntegrityError`.
+3. **Key Management (`GlobalKeyManager`)**:
+   - Master key stored securely at `checkpoints/fedmed_global_model.key`.
+   - PBKDF2-HMAC-SHA256 derivation with 100,000 rounds.
+   - Key rotation via `/api/security/keys/rotate`.
+   - 8-character hex key fingerprint for auditing.
+4. **Encrypted Model Serialization**:
+   - `GlobalModelManager` automatically saves `.pth.enc` bundles for every round and latest/best checkpoints.
+   - Transparent in-memory decryption directly into PyTorch models without writing plaintext weights to insecure storage.
 
-app = FastAPI()
-bridge = FedMedAPIBridge()
+---
 
-@app.get("/api/federation/dashboard")
-def get_dashboard_state():
-    return bridge.get_full_dashboard_state()
+## 🌐 Production FastAPI Backend & Real-Time Telemetry
 
-@app.get("/api/federation/hospitals")
-def get_hospitals():
-    return bridge.get_active_hospitals()
+The FedMed platform includes a complete, production-grade FastAPI REST and WebSocket backend (`backend/`):
 
-@app.get("/api/federation/metrics")
-def get_metrics():
-    return bridge.get_metrics_history()
+### Starting the Backend
+```bash
+# Launch FastAPI backend with Uvicorn (HTTP: 8000, WebSocket: /ws/telemetry)
+python start_backend.py --host 0.0.0.0 --port 8000 --reload
+
+# Offline route validation self-test
+python start_backend.py --dry-run
 ```
 
-### Frontend Dashboard Polling (React / TypeScript Example)
+### Interactive Documentation & Schema
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+- **OpenAPI JSON**: `http://localhost:8000/openapi.json`
+
+### REST API Endpoints Overview
+| Endpoint | Method | Description |
+| :--- | :---: | :--- |
+| `/api/federation/dashboard` | `GET` | Full telemetry dashboard state (rounds, Dice scores, nodes, health) |
+| `/api/federation/status` | `GET` | Real-time federation state (IDLE / TRAINING, current round) |
+| `/api/federation/metrics` | `GET` | Round-by-round convergence history (train/val losses, multi-region Dice) |
+| `/api/hospitals` | `GET` | List all connected and registered hospital client nodes |
+| `/api/hospitals/register` | `POST` | Register hospital node with hardware specs and public key |
+| `/api/hospitals/{id}/heartbeat` | `POST` | Hospital node keep-alive heartbeat ping |
+| `/api/models/global` | `GET` | Global 3D U-Net architecture specs, parameter counts, and version registry |
+| `/api/models/download/latest` | `GET` | Stream latest encrypted global model (`.pth.enc`) with `X-Model-HMAC` headers |
+| `/api/models/download/best` | `GET` | Stream historical best encrypted global model |
+| `/api/models/verify` | `POST` | Cryptographically verify HMAC-SHA256 signature and integrity of model file |
+| `/api/models/dispatch/{id}` | `POST` | Trigger automated encrypted model dispatch to hospital node |
+| `/api/security/status` | `GET` | Global encryption status, cipher mode, key fingerprint, and DP settings |
+| `/api/security/keys/rotate` | `POST` | Rotate master encryption key and re-encrypt latest/best checkpoints |
+| `/api/security/keys/export-hospital-key` | `POST` | Provision authorized hospital node with decryption credential |
+| `/api/control/train/start` | `POST` | Initiate federated training orchestration round |
+| `/api/control/train/stop` | `POST` | Halt active federated training background jobs |
+| `/api/control/simulate` | `POST` | Trigger multi-hospital simulation testbed in background thread |
+| `/api/control/system/health` | `GET` | Inspect server hardware, PyTorch CUDA GPU VRAM, and CPU cores |
+| `/ws/telemetry` | `WebSocket` | Real-time bi-directional telemetry broadcast to Frontend UI |
+
+### Frontend Real-Time WebSocket Integration (React / TypeScript Example)
 ```typescript
 import React, { useEffect, useState } from 'react';
 
-export const FedMedDashboard = () => {
-  const [data, setData] = useState<any>(null);
+export const FedMedLiveDashboard = () => {
+  const [telemetry, setTelemetry] = useState<any>(null);
 
   useEffect(() => {
-    const fetchDashboard = async () => {
-      const res = await fetch('/api/federation/dashboard');
-      const json = await res.json();
-      setData(json);
+    const ws = new WebSocket('ws://localhost:8000/ws/telemetry');
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'INITIAL_STATE' || msg.type === 'TELEMETRY_UPDATE') {
+        setTelemetry(msg.data);
+      }
     };
 
-    fetchDashboard();
-    const interval = setInterval(fetchDashboard, 3000);
-    return () => clearInterval(interval);
+    return () => ws.close();
   }, []);
 
-  if (!data) return <div>Loading FedMed Dashboard...</div>;
+  if (!telemetry) return <div>Connecting to FedMed live telemetry...</div>;
 
   return (
     <div>
-      <h1>FedMed Federated Learning Coordinator</h1>
-      <p>Current Round: {data.federation_summary.current_round} / {data.federation_summary.total_rounds_target}</p>
-      <p>Best Global Dice: {data.federation_summary.best_dice_score}</p>
+      <h1>FedMed Federated AI Coordinator</h1>
+      <p>Round: {telemetry.federation_summary.current_round} / {telemetry.federation_summary.total_rounds_target}</p>
+      <p>Best Global Dice: {telemetry.federation_summary.best_dice_score}</p>
+      <p>Encryption: {telemetry.security.global_weight_encryption.cipher} (Active)</p>
     </div>
   );
 };
 ```
+

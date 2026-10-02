@@ -1,4 +1,4 @@
-"""Privacy-preserving ML, encryption (TenSEAL), and Differential Privacy utilities."""
+"""Privacy-preserving ML, encryption (TenSEAL, AES-256-GCM), and Differential Privacy utilities."""
 
 from federation.security.encryption import (
     EncryptedParameters,
@@ -10,8 +10,16 @@ from federation.security.encryption import (
     encrypt_parameters,
     secure_aggregate_encrypted,
 )
+from federation.security.global_encryption import (
+    CryptographicIntegrityError,
+    EncryptionMetadata,
+    GlobalKeyManager,
+    GlobalWeightEncryptionManager,
+    InvalidKeyError,
+)
 
 __all__ = [
+    # Parameter & Homomorphic Encryption
     "EncryptedParameters",
     "EncryptionContextManager",
     "encrypt_parameters",
@@ -20,5 +28,10 @@ __all__ = [
     "apply_differential_privacy",
     "SecureClientHook",
     "SecureServerHook",
+    # Global Model Weight Encryption & Key Management
+    "GlobalWeightEncryptionManager",
+    "GlobalKeyManager",
+    "EncryptionMetadata",
+    "CryptographicIntegrityError",
+    "InvalidKeyError",
 ]
-

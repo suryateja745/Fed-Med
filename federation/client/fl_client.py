@@ -521,4 +521,7 @@ def start_fedmed_client(
     import flwr as fl
     addr = server_address or client.config.get("federation", {}).get("server_address", "127.0.0.1:8080")
     client.logger.info(f"Connecting {client.hospital_id} to Flower server at {addr}...")
-    fl.client.start_numpy_client(server_address=addr, client=client)
+    if hasattr(client, "to_client"):
+        fl.client.start_client(server_address=addr, client=client.to_client())
+    else:
+        fl.client.start_numpy_client(server_address=addr, client=client)

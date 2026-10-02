@@ -1,7 +1,19 @@
+# Python Virtual Environments
 env/
 venv/
-map.md
-progress.md
+.env
+
+# Node & Frontend Dependencies
+node_modules/
+**/node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Local Datasets & Medical Scans
 data/
@@ -29,6 +41,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+progress.md
+map.md
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
