@@ -141,6 +141,26 @@ def register_user(
     db.add(new_user)
     db.flush()
 
+    # 5b. Auto-provision HospitalNode for hospital staff
+    if user_role == UserRole.HOSPITAL_STAFF:
+        import secrets
+        hosp_node_id = req.hospital_node_id.strip() if req.hospital_node_id else f"NODE-{req.username.strip().upper()[:8]}"
+        existing_hosp_node = db.query(HospitalNode).filter(HospitalNode.node_id == hosp_node_id).first()
+        if not existing_hosp_node:
+            new_hosp_node = HospitalNode(
+                node_id=hosp_node_id,
+                hospital_name=req.institution_name.strip() or f"{req.username.strip()} Hospital",
+                region="Global",
+                api_key=f"fedmed_{secrets.token_hex(16)}",
+                status=NodeStatus.ONLINE,
+                dataset_path=f"./data/{req.username.strip().lower()}",
+                local_sample_count=48,
+                last_heartbeat=datetime.now(timezone.utc),
+                registered_at=datetime.now(timezone.utc),
+            )
+            db.add(new_hosp_node)
+            db.flush()
+
     # 6. Audit log
     client_ip = request.client.host if request.client else "unknown"
     _record_audit_log(
@@ -312,8 +332,28 @@ def list_hospital_nodes(
     db: Session = Depends(get_db),
 ):
     """Returns the list of all registered hospital nodes with status and specs."""
+    from backend.database import sync_hospital_nodes_from_users
+    sync_hospital_nodes_from_users(db)
+
+    now = datetime.now(timezone.utc)
     nodes = db.query(HospitalNode).order_by(HospitalNode.id.asc()).all()
-    return {"hospital_nodes": [n.to_dict() for n in nodes], "total": len(nodes)}
+    result = []
+    for n in nodes:
+        d = n.to_dict()
+        if n.last_heartbeat:
+            hb_dt = n.last_heartbeat.replace(tzinfo=timezone.utc if n.last_heartbeat.tzinfo is None else n.last_heartbeat.tzinfo)
+            diff_sec = (now - hb_dt).total_seconds()
+            is_active = diff_sec <= 20
+        else:
+            diff_sec = 999999
+            is_active = False
+
+        d["is_active"] = is_active
+        d["status"] = "ONLINE" if is_active else "OFFLINE"
+        d["last_seen_seconds"] = int(diff_sec)
+        result.append(d)
+
+    return {"hospital_nodes": result, "total": len(result)}
 
 
 @auth_router.post(

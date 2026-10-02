@@ -32,6 +32,12 @@ export function AuthProvider({ children }) {
     const res = await api.login(username, password);
     setToken(res.access_token);
     setUser(res.user);
+    if (res.user?.role === "HOSPITAL_STAFF" && res.user?.hospital_node_id) {
+      api.sendHeartbeat(res.user.hospital_node_id, {
+        status: "ONLINE",
+        institution_name: res.user.institution_name,
+      });
+    }
     return res.user;
   };
 
@@ -39,10 +45,19 @@ export function AuthProvider({ children }) {
     const res = await api.register(payload);
     setToken(res.access_token);
     setUser(res.user);
+    if (res.user?.role === "HOSPITAL_STAFF" && res.user?.hospital_node_id) {
+      api.sendHeartbeat(res.user.hospital_node_id, {
+        status: "ONLINE",
+        institution_name: res.user.institution_name,
+      });
+    }
     return res.user;
   };
 
   const logout = () => {
+    if (user?.hospital_node_id) {
+      api.setHospitalOffline(user.hospital_node_id);
+    }
     api.logout();
     setToken(null);
     setUser(null);

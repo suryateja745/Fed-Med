@@ -89,6 +89,18 @@ def hospital_heartbeat(
     )
 
 
+@router.post("/{hospital_id}/offline")
+def hospital_offline(
+    hospital_id: str,
+    services: BackendServices = Depends(get_services),
+) -> Dict[str, Any]:
+    """
+    Record an explicit offline disconnect notification when hospital client logs out.
+    """
+    services.record_offline(hospital_id)
+    return {"status": "ACKNOWLEDGED", "hospital_id": hospital_id, "node_status": "OFFLINE"}
+
+
 @router.get("/{hospital_id}/history", response_model=Dict[str, Any])
 def get_hospital_history(
     hospital_id: str,

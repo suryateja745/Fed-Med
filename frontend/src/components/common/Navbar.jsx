@@ -73,36 +73,8 @@ export function Navbar({
           </button>
         </nav>
 
-        {/* Very Right End: Live Status & Action Button */}
+        {/* Very Right End: Action / User Authentication Button */}
         <div className="navbar-right-actions">
-          {/* Live indicator dot */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.45rem",
-              fontSize: "0.8rem",
-              fontFamily: "var(--font-mono)",
-              color: isBackendConnected ? "var(--emerald-light)" : "var(--amber-primary)",
-              padding: "0.3rem 0.75rem",
-              borderRadius: "var(--radius-full)",
-              background: isBackendConnected ? "var(--emerald-subtle)" : "var(--amber-subtle)",
-              border: `1px solid ${isBackendConnected ? "var(--emerald-border)" : "var(--amber-border)"}`,
-              fontWeight: 500,
-            }}
-          >
-            <span
-              style={{
-                width: "7px",
-                height: "7px",
-                borderRadius: "50%",
-                background: isBackendConnected ? "var(--emerald-primary)" : "var(--amber-primary)",
-              }}
-            />
-            <span>{isBackendConnected ? "Consortium Live" : "Offline"}</span>
-          </div>
-
-          {/* CTA / Auth Button */}
           {currentUser ? (
             <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
               <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontWeight: 500 }}>

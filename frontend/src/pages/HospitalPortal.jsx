@@ -79,9 +79,43 @@ export function HospitalPortal({ onNavigate }) {
 
   useEffect(() => {
     fetchHospitals();
-    const interval = setInterval(fetchHospitals, 10000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchHospitals, 3000);
+    const onFocus = () => fetchHospitals();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
+
+  // Real-time Hospital Presence Heartbeat Loop
+  useEffect(() => {
+    if (!isHospitalOperator || !currentHospitalNodeId) return;
+
+    // Send immediate heartbeat on mount
+    api.sendHeartbeat(currentHospitalNodeId, {
+      status: "ONLINE",
+      institution_name: currentHospitalName,
+    });
+
+    // Send keep-alive heartbeat every 5 seconds
+    const hbTimer = setInterval(() => {
+      api.sendHeartbeat(currentHospitalNodeId, {
+        status: trainingState === "TRAINING_ACTIVE" ? "TRAINING" : "ONLINE",
+        institution_name: currentHospitalName,
+      });
+    }, 5000);
+
+    const handleBeforeUnload = () => {
+      api.setHospitalOffline(currentHospitalNodeId);
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      clearInterval(hbTimer);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [isHospitalOperator, currentHospitalNodeId, trainingState, currentHospitalName]);
 
   // 1. Data Validation Handler
   const handleValidateData = async () => {
@@ -196,10 +230,17 @@ export function HospitalPortal({ onNavigate }) {
     }, 2200);
   };
 
+  const dummyHospitalNames = new Set(["hospital_a", "hospital_b", "hospital_factory", "hospital_test", "hospital_test_node", "hosp_recovery_test"]);
+  const validHospitals = (hospitals || []).filter((h) => {
+    if (!h) return false;
+    const id = (h.node_id || h.hospital_id || "").toLowerCase().trim();
+    return !dummyHospitalNames.has(id);
+  });
+
   const filteredHospitals =
     selectedNodeFilter === "all"
-      ? hospitals
-      : hospitals.filter((h) => h.status === selectedNodeFilter);
+      ? validHospitals
+      : validHospitals.filter((h) => h.status === selectedNodeFilter);
 
   return (
     <div style={{ maxWidth: "1280px", margin: "1.5rem auto 3rem", padding: "0 1rem" }}>
@@ -728,21 +769,40 @@ export function HospitalPortal({ onNavigate }) {
         </div>
 
         {/* Global Hospital Cards Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "1.25rem" }}>
-          {filteredHospitals.map((h, i) => {
-            const isUserOwnNode = isHospitalOperator && (h.node_id === currentHospitalNodeId || h.hospital_name.includes("Sinai"));
+        {filteredHospitals.length === 0 ? (
+          <div
+            style={{
+              padding: "2.5rem 1.5rem",
+              textAlign: "center",
+              background: "#ffffff",
+              borderRadius: "var(--radius-xl, 20px)",
+              border: "1px dashed var(--border-subtle, #e2e8f0)",
+              color: "var(--text-muted, #64748b)",
+              fontSize: "0.9rem",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: "var(--text-secondary, #334155)", marginBottom: "0.25rem" }}>
+              No hospital node connected at the moment
+            </div>
+            <span>Institutional hospital nodes will be listed here after registration or connecting to the federation network.</span>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "1.25rem" }}>
+            {filteredHospitals.map((h, i) => {
+              const isUserOwnNode = isHospitalOperator && (h.node_id === currentHospitalNodeId);
+              const isActive = h.is_active || h.status === "ONLINE" || h.status === "READY" || h.status === "TRAINING";
 
-            return (
-              <div
-                key={h.node_id || i}
-                style={{
-                  background: "#ffffff",
-                  border: `1px solid ${isUserOwnNode ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
-                  borderRadius: "var(--radius-xl, 20px)",
-                  padding: "1.5rem",
-                  boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
-                  display: "flex",
-                  flexDirection: "column",
+              return (
+                <div
+                  key={h.node_id || i}
+                  style={{
+                    background: "#ffffff",
+                    border: `1px solid ${isUserOwnNode ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
+                    borderRadius: "var(--radius-xl, 20px)",
+                    padding: "1.5rem",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+                    display: "flex",
+                    flexDirection: "column",
                   gap: "1rem",
                   position: "relative",
                 }}
@@ -774,7 +834,7 @@ export function HospitalPortal({ onNavigate }) {
                       {h.hospital_name}
                     </h3>
                     <div style={{ fontSize: "0.78rem", color: "var(--text-muted, #64748b)", marginTop: "0.15rem" }}>
-                      {h.region}
+                      {h.region || "Institutional Node"}
                     </div>
                   </div>
 
@@ -783,14 +843,25 @@ export function HospitalPortal({ onNavigate }) {
                       fontSize: "0.72rem",
                       fontFamily: "var(--font-mono, monospace)",
                       fontWeight: 600,
-                      padding: "0.2rem 0.55rem",
+                      padding: "0.25rem 0.6rem",
                       borderRadius: "9999px",
-                      background: h.status === "ONLINE" ? "var(--emerald-subtle, #ecfdf5)" : "var(--bg-subtle, #f1f5f9)",
-                      color: h.status === "ONLINE" ? "var(--emerald-light, #059669)" : "var(--text-muted, #64748b)",
-                      border: `1px solid ${h.status === "ONLINE" ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
+                      background: isActive ? "var(--emerald-subtle, #ecfdf5)" : "var(--bg-subtle, #f1f5f9)",
+                      color: isActive ? "var(--emerald-light, #059669)" : "var(--text-muted, #64748b)",
+                      border: `1px solid ${isActive ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
                     }}
                   >
-                    {h.status || "ONLINE"}
+                    <span
+                      style={{
+                        width: "6px",
+                        height: "6px",
+                        borderRadius: "50%",
+                        background: isActive ? "var(--emerald-primary, #10b981)" : "#94a3b8",
+                      }}
+                    />
+                    {isActive ? "ACTIVE • ONLINE" : "INACTIVE • OFFLINE"}
                   </span>
                 </div>
 
@@ -834,7 +905,9 @@ export function HospitalPortal({ onNavigate }) {
             );
           })}
         </div>
+      )}
       </div>
     </div>
   );
 }
+

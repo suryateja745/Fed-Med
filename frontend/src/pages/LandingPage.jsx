@@ -273,8 +273,8 @@ export function LandingPage({ onNavigate }) {
                 Consortium Coordinator FedAvg
               </h3>
               <p className="flash-card-text">
-                The central coordinator securely aggregates encrypted updates from Mayo Clinic,
-                Charité Berlin, and Johns Hopkins using Federated Averaging (FedAvg), yielding a
+                The central coordinator securely aggregates encrypted updates from Wockhardt Hospital,
+                Mayo Clinic, KIMS Kingsway Hospital, and AIIMS (AIMS) using Federated Averaging (FedAvg), yielding a
                 globally superior 3D segmentation model for all members.
               </p>
               <div className="flash-card-metrics-row">

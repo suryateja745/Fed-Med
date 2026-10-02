@@ -141,7 +141,23 @@ export const api = {
   async getDashboard() {
     try {
       const res = await fetch(`${API_BASE_URL}/federation/dashboard`);
-      if (res.ok) return await res.json();
+      if (res.ok) {
+        const data = await res.json();
+        const dummyNames = new Set(["hospital_a", "hospital_b", "hospital_factory", "hospital_test", "hospital_test_node", "hosp_recovery_test"]);
+        if (data && Array.isArray(data.participating_hospitals)) {
+          data.participating_hospitals = data.participating_hospitals.filter((h) => {
+            if (!h || !h.hospital_id) return false;
+            const normId = h.hospital_id.toLowerCase().trim();
+            if (dummyNames.has(normId)) return false;
+            if (h.best_local_dice !== undefined && h.best_local_dice < 0) return false;
+            return true;
+          });
+          if (data.federation_summary) {
+            data.federation_summary.active_hospitals_count = data.participating_hospitals.length;
+          }
+        }
+        return data;
+      }
     } catch (e) {
       console.warn("Backend offline, returning mock dashboard state:", e);
     }
@@ -151,67 +167,42 @@ export const api = {
       project_name: "FedMed 3D Brain Tumor MRI Federated Segmentation",
       timestamp: new Date().toISOString(),
       federation_summary: {
-        current_round: 5,
+        current_round: 0,
         total_rounds_target: 10,
-        best_dice_score: 0.8842,
-        best_round: 5,
-        active_hospitals_count: 3,
+        best_dice_score: 0.0,
+        best_round: 0,
+        active_hospitals_count: 0,
         min_clients_required: 2,
       },
       latest_round_metrics: {
-        train_loss: 0.1642,
-        val_loss: 0.1428,
-        val_dice_mean: 0.8842,
-        val_dice_tc: 0.8715,
-        val_dice_wt: 0.9082,
-        val_dice_et: 0.8629,
+        train_loss: 0.0,
+        val_loss: 0.0,
+        val_dice_mean: 0.0,
+        val_dice_tc: 0.0,
+        val_dice_wt: 0.0,
+        val_dice_et: 0.0,
       },
       checkpoint_info: {
-        latest_round: 5,
-        best_round: 5,
-        best_dice_score: 0.8842,
-        has_best_checkpoint: true,
-        has_latest_checkpoint: true,
-        has_encrypted_best: true,
-        has_encrypted_latest: true,
-        best_model_size_mb: 4.85,
-        latest_model_size_mb: 4.85,
+        latest_round: 0,
+        best_round: 0,
+        best_dice_score: 0.0,
+        has_best_checkpoint: false,
+        has_latest_checkpoint: false,
+        has_encrypted_best: false,
+        has_encrypted_latest: false,
+        best_model_size_mb: 0.0,
+        latest_model_size_mb: 0.0,
         model_architecture: "UNet3D (MONAI 4-Channel In / 3-Region Out)",
         encryption: {
           cipher: "AES-256-GCM",
           kdf: "PBKDF2-HMAC-SHA256 (100,000 rounds)",
-          key_id: "7F8B2C4D",
+          key_id: "NONE",
         },
       },
-      participating_hospitals: [
-        {
-          hospital_id: "hospital_a",
-          status: "ONLINE",
-          latest_round: 5,
-          best_local_dice: 0.8812,
-        },
-        {
-          hospital_id: "hospital_b",
-          status: "ONLINE",
-          latest_round: 5,
-          best_local_dice: 0.8924,
-        },
-        {
-          hospital_id: "hospital_c",
-          status: "ONLINE",
-          latest_round: 5,
-          best_local_dice: 0.8790,
-        },
-      ],
-      metrics_history: [
-        { round: 1, val_dice_mean: 0.742, tc: 0.71, wt: 0.78, et: 0.73, loss: 0.38 },
-        { round: 2, val_dice_mean: 0.798, tc: 0.78, wt: 0.83, et: 0.78, loss: 0.29 },
-        { round: 3, val_dice_mean: 0.836, tc: 0.82, wt: 0.87, et: 0.81, loss: 0.22 },
-        { round: 4, val_dice_mean: 0.862, tc: 0.85, wt: 0.89, et: 0.84, loss: 0.18 },
-        { round: 5, val_dice_mean: 0.884, tc: 0.87, wt: 0.91, et: 0.86, loss: 0.14 },
-      ],
-      system_health: { status: "HEALTHY", cpu_percent: 24.5, ram_percent: 48.2 },
-      security: { encryption_active: true, cipher: "AES-256-GCM", key_fingerprint: "7F8B2C4D" },
+      participating_hospitals: [],
+      metrics_history: [],
+      system_health: { status: "HEALTHY", cpu_percent: 15.0, ram_percent: 30.0 },
+      security: { encryption_active: true, cipher: "AES-256-GCM", key_fingerprint: "READY" },
     };
   },
 
@@ -225,47 +216,44 @@ export const api = {
       });
       if (res.ok) {
         const data = await res.json();
-        return data.hospital_nodes || [];
+        const dummyNames = new Set(["hospital_a", "hospital_b", "hospital_factory", "hospital_test", "hospital_test_node", "hosp_recovery_test"]);
+        return (data.hospital_nodes || []).filter((h) => {
+          if (!h) return false;
+          const id = (h.node_id || h.hospital_id || "").toLowerCase().trim();
+          return !dummyNames.has(id);
+        });
       }
     } catch (e) {
       console.warn("Failed to fetch nodes from API, using fallback:", e);
     }
 
-    return [
-      {
-        node_id: "NODE-HOSP-A",
-        hospital_name: "Mount Sinai Brain Tumor Center",
-        region: "New York, USA",
-        gpu_device: "NVIDIA RTX 4090 (24GB)",
-        vram_gb: 24.0,
-        cpu_cores: 16,
-        status: "ONLINE",
-        dataset_path: "./data/hospital_a",
-        local_sample_count: 48,
-      },
-      {
-        node_id: "NODE-HOSP-B",
-        hospital_name: "Johns Hopkins Neuro-Oncology Unit",
-        region: "Baltimore, USA",
-        gpu_device: "NVIDIA A100 Tensor Core (80GB)",
-        vram_gb: 80.0,
-        cpu_cores: 32,
-        status: "ONLINE",
-        dataset_path: "./data/hospital_b",
-        local_sample_count: 64,
-      },
-      {
-        node_id: "NODE-HOSP-C",
-        hospital_name: "Mayo Clinic Imaging Research Consortium",
-        region: "Rochester, USA",
-        gpu_device: "NVIDIA RTX 3090 (24GB)",
-        vram_gb: 24.0,
-        cpu_cores: 16,
-        status: "ONLINE",
-        dataset_path: "./data/hospital_c",
-        local_sample_count: 36,
-      },
-    ];
+    return [];
+  },
+
+  async sendHeartbeat(hospitalId, payload = {}) {
+    if (!hospitalId) return null;
+    try {
+      const res = await fetch(`${API_BASE_URL}/hospitals/${encodeURIComponent(hospitalId)}/heartbeat`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: jsonBody({ status: "ONLINE", ...payload }),
+      });
+      if (res.ok) return await res.json();
+    } catch (e) {
+      // heartbeats fail silently
+    }
+    return null;
+  },
+
+  async setHospitalOffline(hospitalId) {
+    if (!hospitalId) return null;
+    try {
+      await fetch(`${API_BASE_URL}/hospitals/${encodeURIComponent(hospitalId)}/offline`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: jsonBody({}),
+      });
+    } catch (e) {}
   },
 
   // -------------------------------------------------------------------------

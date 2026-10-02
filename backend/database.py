@@ -337,106 +337,45 @@ def seed_default_data(db: Session) -> None:
         db.add(admin)
         logger.info("  * Seeded default Coordinator Admin user (admin)")
 
-    # 2. Seed Hospital Nodes (A, B, C)
-    default_nodes = [
-        {
-            "node_id": "NODE-HOSP-A",
-            "hospital_name": "Mount Sinai Brain Tumor Center",
-            "region": "New York, USA",
-            "api_key": "fedmed_live_key_hosp_a_89324789",
-            "gpu_device": "NVIDIA RTX 4090 (24GB)",
-            "vram_gb": 24.0,
-            "cpu_cores": 16,
-            "dataset_path": "./data/hospital_a",
-            "local_sample_count": 48,
-            "staff_username": "hosp_a_lead",
-            "staff_email": "neuro.lead@mountsinai.org",
-            "staff_pass": "HospA@FedMed2026!",
-        },
-        {
-            "node_id": "NODE-HOSP-B",
-            "hospital_name": "Johns Hopkins Neuro-Oncology Unit",
-            "region": "Baltimore, USA",
-            "api_key": "fedmed_live_key_hosp_b_32948234",
-            "gpu_device": "NVIDIA A100 Tensor Core (80GB)",
-            "vram_gb": 80.0,
-            "cpu_cores": 32,
-            "dataset_path": "./data/hospital_b",
-            "local_sample_count": 64,
-            "staff_username": "hosp_b_lead",
-            "staff_email": "lead.fl@jhmi.edu",
-            "staff_pass": "HospB@FedMed2026!",
-        },
-        {
-            "node_id": "NODE-HOSP-C",
-            "hospital_name": "Mayo Clinic Imaging Research Consortium",
-            "region": "Rochester, USA",
-            "api_key": "fedmed_live_key_hosp_c_19283746",
-            "gpu_device": "NVIDIA RTX 3090 (24GB)",
-            "vram_gb": 24.0,
-            "cpu_cores": 16,
-            "dataset_path": "./data/hospital_c",
-            "local_sample_count": 36,
-            "staff_username": "hosp_c_lead",
-            "staff_email": "mri.research@mayo.edu",
-            "staff_pass": "HospC@FedMed2026!",
-        },
-    ]
+    db.commit()
 
-    for item in default_nodes:
-        node = db.query(HospitalNode).filter(HospitalNode.node_id == item["node_id"]).first()
-        if not node:
+
+def sync_hospital_nodes_from_users(db: Session) -> List[HospitalNode]:
+    """
+    Ensure all registered HOSPITAL_STAFF accounts have corresponding HospitalNode records.
+    Automatically provisions new nodes if a user signed up without explicit node creation.
+    """
+    import secrets
+    hosp_users = db.query(User).filter(User.role == UserRole.HOSPITAL_STAFF).all()
+    created_nodes = []
+
+    for u in hosp_users:
+        node_id = u.hospital_node_id or f"NODE-{u.username.upper()[:8]}"
+        hosp_name = u.institution_name or f"{u.username.capitalize()} Hospital"
+
+        existing = db.query(HospitalNode).filter(
+            (HospitalNode.node_id == node_id) | (HospitalNode.hospital_name == hosp_name)
+        ).first()
+
+        if not existing:
             new_node = HospitalNode(
-                node_id=item["node_id"],
-                hospital_name=item["hospital_name"],
-                region=item["region"],
-                api_key=item["api_key"],
-                gpu_device=item["gpu_device"],
-                vram_gb=item["vram_gb"],
-                cpu_cores=item["cpu_cores"],
+                node_id=node_id,
+                hospital_name=hosp_name,
+                region="Global",
+                api_key=f"fedmed_{secrets.token_hex(16)}",
                 status=NodeStatus.ONLINE,
-                dataset_path=item["dataset_path"],
-                local_sample_count=item["local_sample_count"],
+                dataset_path=f"./data/{u.username.lower()}",
+                local_sample_count=48,
+                last_heartbeat=datetime.now(timezone.utc),
+                registered_at=u.created_at or datetime.now(timezone.utc),
             )
             db.add(new_node)
-            logger.info(f"  * Seeded Hospital Node: {item['node_id']} ({item['hospital_name']})")
+            created_nodes.append(new_node)
+            logger.info(f"Auto-provisioned HospitalNode '{node_id}' for user '{u.username}' ({hosp_name})")
 
-        staff = db.query(User).filter(User.username == item["staff_username"]).first()
-        if not staff:
-            p_hash, p_salt = hash_password(item["staff_pass"])
-            new_staff = User(
-                user_id=f"USER-{item['node_id'].replace('NODE-', '')}",
-                username=item["staff_username"],
-                email=item["staff_email"],
-                password_hash=p_hash,
-                salt=p_salt,
-                role=UserRole.HOSPITAL_STAFF,
-                institution_name=item["hospital_name"],
-                hospital_node_id=item["node_id"],
-                is_active=True,
-            )
-            db.add(new_staff)
-            logger.info(f"  * Seeded Hospital Staff user ({item['staff_username']})")
-
-    # 3. Seed Clinical Quality Auditor
-    auditor_user = db.query(User).filter(User.username == "auditor").first()
-    if not auditor_user:
-        p_hash, p_salt = hash_password("Audit@FedMed2026!")
-        auditor = User(
-            user_id="USER-AUDIT-001",
-            username="auditor",
-            email="regulatory.audit@fedmed.ai",
-            password_hash=p_hash,
-            salt=p_salt,
-            role=UserRole.AUDITOR,
-            institution_name="Global Clinical Ethics & AI Governance Board",
-            hospital_node_id=None,
-            is_active=True,
-        )
-        db.add(auditor)
-        logger.info("  * Seeded Clinical Auditor user (auditor)")
-
-    db.commit()
+    if created_nodes:
+        db.commit()
+    return created_nodes
 
 
 def init_db(engine_override=None) -> None:

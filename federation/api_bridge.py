@@ -119,53 +119,24 @@ class FedMedAPIBridge:
         return history
 
     def get_active_hospitals(self) -> List[Dict[str, Any]]:
-        """Scan logs and data directories to discover participating hospital client nodes."""
+        """Return registered active hospital client nodes from the database."""
         hospitals: Dict[str, Dict[str, Any]] = {}
-
-        # 1. Check local hospital history JSON files in data/ and logs/
-        search_dirs = [self.logs_dir, self.data_dir]
-        for s_dir in search_dirs:
-            if not s_dir.exists():
-                continue
-            for hist_file in s_dir.glob("*_history.json"):
-                h_name = hist_file.stem.replace("_history", "").replace("sim_", "")
-                data = self._read_json(hist_file)
-                if data:
-                    hospitals[h_name] = {
-                        "hospital_id": h_name,
-                        "status": "CONNECTED",
-                        "latest_round": data.get("latest_round", data.get("current_round", 0)),
-                        "best_local_dice": data.get("best_dice", data.get("best_local_dice", -1.0)),
-                        "last_update": data.get("last_update", data.get("timestamp")),
-                        "history_file": str(hist_file),
+        try:
+            from backend.database import get_db_session, HospitalNode
+            with get_db_session() as db:
+                db_nodes = db.query(HospitalNode).all()
+                for n in db_nodes:
+                    hospitals[n.node_id] = {
+                        "hospital_id": n.node_id,
+                        "institution_name": n.hospital_name,
+                        "region": n.region,
+                        "status": n.status.value if hasattr(n.status, "value") else str(n.status),
+                        "latest_round": 0,
+                        "best_local_dice": 0.0,
+                        "last_update": None,
                     }
-
-        # 2. Check dispatch audit events
-        dispatch_events = self._read_jsonl(self.logs_dir / "dispatch_audit.jsonl")
-        for ev in dispatch_events:
-            h_name = ev.get("hospital_id")
-            if h_name:
-                if h_name not in hospitals:
-                    hospitals[h_name] = {
-                        "hospital_id": h_name,
-                        "status": "IDLE",
-                        "latest_round": ev.get("round_num", 0),
-                        "best_local_dice": -1.0,
-                        "last_update": ev.get("timestamp"),
-                    }
-                else:
-                    hospitals[h_name]["last_update"] = ev.get("timestamp")
-
-        # 3. Default known nodes if none detected yet
-        if not hospitals:
-            for default_hosp in ["hospital_a", "hospital_b", "hospital_c"]:
-                hospitals[default_hosp] = {
-                    "hospital_id": default_hosp,
-                    "status": "READY",
-                    "latest_round": 0,
-                    "best_local_dice": -1.0,
-                    "last_update": None,
-                }
+        except Exception:
+            pass
 
         return list(hospitals.values())
 

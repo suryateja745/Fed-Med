@@ -112,13 +112,16 @@ export function Footer({ onNavigate }) {
                   </button>
                 </li>
                 <li>
+                  <span className="footer-link-item">Wockhardt Hospital</span>
+                </li>
+                <li>
                   <span className="footer-link-item">Mayo Clinic</span>
                 </li>
                 <li>
-                  <span className="footer-link-item">Charité Berlin</span>
+                  <span className="footer-link-item">KIMS Kingsway</span>
                 </li>
                 <li>
-                  <span className="footer-link-item">Johns Hopkins</span>
+                  <span className="footer-link-item">AIIMS (AIMS)</span>
                 </li>
               </ul>
             </div>

@@ -12,27 +12,27 @@ import {
 export function AboutUsPage({ onNavigate }) {
   const partners = [
     {
+      name: "Wockhardt Hospital",
+      location: "Nagpur / Mumbai, India",
+      specialty: "Neuro-Oncology & Volumetric Surgery",
+      cohort: "1,180 Patients",
+    },
+    {
       name: "Mayo Clinic",
       location: "Rochester, MN, USA",
       specialty: "Neuro-Oncology & Volumetric Imaging",
       cohort: "1,420 Patients",
     },
     {
-      name: "Johns Hopkins Medicine",
-      location: "Baltimore, MD, USA",
-      specialty: "Clinical Brain Tumor AI Translation",
+      name: "KIMS Kingsway Hospital",
+      location: "Nagpur, India",
+      specialty: "Multi-Modal Brain Tumor AI Translation",
       cohort: "1,050 Patients",
     },
     {
-      name: "Charité Universitätsmedizin",
-      location: "Berlin, Germany",
-      specialty: "European GDPR Federated Research",
-      cohort: "980 Patients",
-    },
-    {
-      name: "Mount Sinai Health System",
-      location: "New York, NY, USA",
-      specialty: "Multi-Modal BraTS AI Benchmarking",
+      name: "AIIMS (AIMS)",
+      location: "Nagpur / New Delhi, India",
+      specialty: "Clinical BraTS Oncology Benchmarking",
       cohort: "1,260 Patients",
     },
   ];

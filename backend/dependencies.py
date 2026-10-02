@@ -181,7 +181,8 @@ class BackendServices:
 
     def record_heartbeat(self, h_id: str, hb_data: Dict[str, Any]) -> Dict[str, Any]:
         """Record a heartbeat ping from a hospital node."""
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat()
         heartbeat_entry = {
             "hospital_id": h_id,
             "timestamp": now_iso,
@@ -190,38 +191,108 @@ class BackendServices:
 
         with self._hospitals_lock:
             self._hospital_heartbeats[h_id] = heartbeat_entry
-            if h_id in self._registered_hospitals:
-                self._registered_hospitals[h_id]["status"] = hb_data.get("status", "CONNECTED")
-                self._registered_hospitals[h_id]["last_heartbeat"] = now_iso
-                if "local_dice" in hb_data and hb_data["local_dice"] is not None:
-                    self._registered_hospitals[h_id]["latest_local_dice"] = hb_data["local_dice"]
-                if "current_round" in hb_data and hb_data["current_round"] is not None:
-                    self._registered_hospitals[h_id]["current_round"] = hb_data["current_round"]
+            if h_id not in self._registered_hospitals:
+                self._registered_hospitals[h_id] = {
+                    "hospital_id": h_id,
+                    "institution_name": hb_data.get("institution_name", h_id),
+                    "registered_at": now_iso,
+                }
+            self._registered_hospitals[h_id]["status"] = hb_data.get("status", "ONLINE")
+            self._registered_hospitals[h_id]["last_heartbeat"] = now_iso
+            self._registered_hospitals[h_id]["is_active"] = True
+            if "local_dice" in hb_data and hb_data["local_dice"] is not None:
+                self._registered_hospitals[h_id]["latest_local_dice"] = hb_data["local_dice"]
+            if "current_round" in hb_data and hb_data["current_round"] is not None:
+                self._registered_hospitals[h_id]["current_round"] = hb_data["current_round"]
+
+        # Persist heartbeat to database
+        try:
+            from backend.database import get_db_session, HospitalNode, NodeStatus
+            with get_db_session() as db:
+                node = db.query(HospitalNode).filter(HospitalNode.node_id == h_id).first()
+                if node:
+                    node.last_heartbeat = now_dt
+                    node.status = NodeStatus.ONLINE
+                    db.commit()
+        except Exception as e:
+            self.logger.debug(f"Heartbeat DB update error: {e}")
 
         return heartbeat_entry
 
-    def get_all_hospitals(self) -> List[Dict[str, Any]]:
-        """Consolidate registered hospitals and filesystem/log-discovered nodes."""
-        discovered = self.api_bridge.get_active_hospitals()
-        hospitals_map: Dict[str, Dict[str, Any]] = {h["hospital_id"]: h for h in discovered}
+    def record_offline(self, h_id: str) -> None:
+        """Mark a hospital node explicitly offline."""
+        with self._hospitals_lock:
+            if h_id in self._registered_hospitals:
+                self._registered_hospitals[h_id]["status"] = "OFFLINE"
+                self._registered_hospitals[h_id]["is_active"] = False
+        try:
+            from backend.database import get_db_session, HospitalNode, NodeStatus
+            with get_db_session() as db:
+                node = db.query(HospitalNode).filter(HospitalNode.node_id == h_id).first()
+                if node:
+                    node.status = NodeStatus.OFFLINE
+                    db.commit()
+        except Exception as e:
+            self.logger.debug(f"Offline DB update error: {e}")
 
+    def get_all_hospitals(self) -> List[Dict[str, Any]]:
+        """Return registered hospital nodes from relational database and dynamic registry."""
+        hospitals_map: Dict[str, Dict[str, Any]] = {}
+        now = datetime.now(timezone.utc)
+
+        # 1. Query database for registered institutional nodes and sync from users
+        try:
+            from backend.database import get_db_session, HospitalNode, sync_hospital_nodes_from_users
+            with get_db_session() as db:
+                sync_hospital_nodes_from_users(db)
+                db_nodes = db.query(HospitalNode).all()
+                for n in db_nodes:
+                    if n.last_heartbeat:
+                        hb_tz = n.last_heartbeat.replace(tzinfo=timezone.utc if n.last_heartbeat.tzinfo is None else n.last_heartbeat.tzinfo)
+                        diff_sec = (now - hb_tz).total_seconds()
+                        is_active = diff_sec <= 20
+                    else:
+                        diff_sec = 999999
+                        is_active = False
+
+                    hospitals_map[n.node_id] = {
+                        "hospital_id": n.node_id,
+                        "institution_name": n.hospital_name,
+                        "region": n.region,
+                        "gpu_name": n.gpu_device,
+                        "gpu_vram_gb": n.vram_gb,
+                        "cpu_cores": n.cpu_cores,
+                        "status": "ONLINE" if is_active else "OFFLINE",
+                        "is_active": is_active,
+                        "last_seen_seconds": int(diff_sec),
+                        "dataset_path": n.dataset_path,
+                        "local_sample_count": n.local_sample_count,
+                        "latest_round": 0,
+                        "best_local_dice": 0.0,
+                        "registered": True,
+                    }
+        except Exception as e:
+            self.logger.debug(f"Could not read hospital_nodes from DB: {e}")
+
+        # 2. Merge with dynamic in-memory registry
         with self._hospitals_lock:
             for h_id, reg in self._registered_hospitals.items():
                 if h_id in hospitals_map:
                     hospitals_map[h_id].update({
-                        "institution_name": reg.get("institution_name"),
-                        "gpu_name": reg.get("gpu_name"),
-                        "gpu_vram_gb": reg.get("gpu_vram_gb"),
+                        "institution_name": reg.get("institution_name", hospitals_map[h_id]["institution_name"]),
                         "status": reg.get("status", hospitals_map[h_id].get("status")),
-                        "registered": True,
+                        "is_active": reg.get("is_active", hospitals_map[h_id].get("is_active", False)),
+                        "latest_round": reg.get("current_round", hospitals_map[h_id].get("latest_round", 0)),
+                        "best_local_dice": reg.get("latest_local_dice", hospitals_map[h_id].get("best_local_dice", 0.0)),
                     })
                 else:
                     hospitals_map[h_id] = {
                         "hospital_id": h_id,
-                        "institution_name": reg.get("institution_name"),
-                        "status": reg.get("status", "READY"),
+                        "institution_name": reg.get("institution_name", "Registered Node"),
+                        "status": reg.get("status", "ONLINE"),
+                        "is_active": reg.get("is_active", True),
                         "latest_round": reg.get("current_round", 0),
-                        "best_local_dice": reg.get("latest_local_dice", -1.0),
+                        "best_local_dice": reg.get("latest_local_dice", 0.0),
                         "last_update": reg.get("last_heartbeat", reg.get("registered_at")),
                         "gpu_name": reg.get("gpu_name"),
                         "gpu_vram_gb": reg.get("gpu_vram_gb"),

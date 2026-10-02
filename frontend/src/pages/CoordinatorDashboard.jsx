@@ -46,8 +46,13 @@ export function CoordinatorDashboard({ onNavigate }) {
 
   useEffect(() => {
     fetchDashboard();
-    const timer = setInterval(fetchDashboard, 8000);
-    return () => clearInterval(timer);
+    const timer = setInterval(fetchDashboard, 3000);
+    const onFocus = () => fetchDashboard();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const handleStartTraining = async () => {
@@ -94,53 +99,57 @@ export function CoordinatorDashboard({ onNavigate }) {
     }, 1800);
   };
 
-  // Safe telemetry data accessors with defaults
-  const summary = data?.federation_summary || {
-    current_round: 5,
-    total_rounds_target: 10,
-    best_dice_score: 0.8842,
-    best_round: 5,
-    active_hospitals_count: 3,
-    min_clients_required: 2,
+  const dummyHospitalNames = new Set(["hospital_a", "hospital_b", "hospital_factory", "hospital_test", "hospital_test_node", "hosp_recovery_test"]);
+  const rawHospitals = data?.participating_hospitals || [];
+  const hospitals = rawHospitals.filter((h) => {
+    if (!h || !h.hospital_id) return false;
+    const normId = h.hospital_id.toLowerCase().trim();
+    if (dummyHospitalNames.has(normId)) return false;
+    if (h.best_local_dice !== undefined && h.best_local_dice < 0) return false;
+    return true;
+  });
+
+  const activeHospitals = hospitals.filter(h => h.is_active || h.status === "ONLINE" || h.status === "READY" || h.status === "TRAINING");
+  const activeCount = activeHospitals.length;
+  const inactiveCount = hospitals.length - activeCount;
+
+  // Safe telemetry data accessors with clean initial states (no dummy records)
+  const summary = {
+    ...(data?.federation_summary || {}),
+    current_round: data?.federation_summary?.current_round || 0,
+    total_rounds_target: data?.federation_summary?.total_rounds_target || 10,
+    best_dice_score: data?.federation_summary?.best_dice_score || 0.0,
+    best_round: data?.federation_summary?.best_round || 0,
+    active_hospitals_count: activeCount,
+    total_hospitals_count: hospitals.length,
+    min_clients_required: data?.federation_summary?.min_clients_required || 2,
   };
 
   const latestMetrics = data?.latest_round_metrics || {
-    train_loss: 0.1642,
-    val_loss: 0.1428,
-    val_dice_mean: 0.8842,
-    val_dice_tc: 0.8715,
-    val_dice_wt: 0.9082,
-    val_dice_et: 0.8629,
+    train_loss: 0.0,
+    val_loss: 0.0,
+    val_dice_mean: 0.0,
+    val_dice_tc: 0.0,
+    val_dice_wt: 0.0,
+    val_dice_et: 0.0,
   };
 
-  const hospitals = data?.participating_hospitals || [
-    { hospital_id: "hospital_a", status: "ONLINE", latest_round: 5, best_local_dice: 0.8812 },
-    { hospital_id: "hospital_b", status: "ONLINE", latest_round: 5, best_local_dice: 0.8924 },
-    { hospital_id: "hospital_c", status: "ONLINE", latest_round: 5, best_local_dice: 0.879 },
-  ];
-
-  const metricsHistory = data?.metrics_history || [
-    { round: 1, val_dice_mean: 0.742, tc: 0.71, wt: 0.78, et: 0.73, loss: 0.38 },
-    { round: 2, val_dice_mean: 0.798, tc: 0.78, wt: 0.83, et: 0.78, loss: 0.29 },
-    { round: 3, val_dice_mean: 0.836, tc: 0.82, wt: 0.87, et: 0.81, loss: 0.22 },
-    { round: 4, val_dice_mean: 0.862, tc: 0.85, wt: 0.89, et: 0.84, loss: 0.18 },
-    { round: 5, val_dice_mean: 0.884, tc: 0.87, wt: 0.91, et: 0.86, loss: 0.14 },
-  ];
+  const metricsHistory = data?.metrics_history || [];
 
   const checkpoint = data?.checkpoint_info || {
-    best_model_size_mb: 4.85,
+    best_model_size_mb: 0.0,
     model_architecture: "UNet3D (MONAI 4-Channel In / 3-Region Out)",
-    encryption: { cipher: "AES-256-GCM", key_id: "7F8B2C4D" },
+    encryption: { cipher: "AES-256-GCM", key_id: "NONE" },
   };
 
   // Pie chart calculation for tumor sub-regions (Whole Tumor, Tumor Core, Enhancing Tumor)
-  const wtScore = latestMetrics.val_dice_wt || 0.9082;
-  const tcScore = latestMetrics.val_dice_tc || 0.8715;
-  const etScore = latestMetrics.val_dice_et || 0.8629;
+  const wtScore = latestMetrics.val_dice_wt || 0.0;
+  const tcScore = latestMetrics.val_dice_tc || 0.0;
+  const etScore = latestMetrics.val_dice_et || 0.0;
   const totalSubregions = wtScore + tcScore + etScore;
-  const wtPct = Math.round((wtScore / totalSubregions) * 100);
-  const tcPct = Math.round((tcScore / totalSubregions) * 100);
-  const etPct = 100 - wtPct - tcPct;
+  const wtPct = totalSubregions > 0 ? Math.round((wtScore / totalSubregions) * 100) : 0;
+  const tcPct = totalSubregions > 0 ? Math.round((tcScore / totalSubregions) * 100) : 0;
+  const etPct = totalSubregions > 0 ? 100 - wtPct - tcPct : 0;
 
   return (
     <div style={{ maxWidth: "1280px", margin: "1.5rem auto 3rem", padding: "0 1rem" }}>
@@ -495,11 +504,18 @@ export function CoordinatorDashboard({ onNavigate }) {
               <IconHospital size={16} />
             </span>
           </div>
-          <div style={{ fontSize: "2rem", fontWeight: 800, color: "var(--violet-primary, #6366f1)", marginTop: "0.5rem", fontFamily: "var(--font-heading, sans-serif)" }}>
-            {summary.active_hospitals_count} Nodes
+          <div style={{ fontSize: "2rem", fontWeight: 800, color: "var(--violet-primary, #6366f1)", marginTop: "0.5rem", fontFamily: "var(--font-heading, sans-serif)", display: "flex", alignItems: "baseline", gap: "0.5rem", flexWrap: "wrap" }}>
+            <span>{hospitals.length} Nodes</span>
+            {hospitals.length > 0 && (
+              <span style={{ fontSize: "0.85rem", fontWeight: 600, color: activeCount > 0 ? "var(--emerald-light, #059669)" : "var(--text-muted, #64748b)" }}>
+                ({activeCount} Active{inactiveCount > 0 ? `, ${inactiveCount} Offline` : ""})
+              </span>
+            )}
           </div>
           <div style={{ fontSize: "0.78rem", color: "var(--text-muted, #64748b)", marginTop: "0.3rem" }}>
-            Min quorum threshold: {summary.min_clients_required} institutions
+            {activeCount >= summary.min_clients_required
+              ? "Quorum reached for federated aggregation"
+              : `Quorum target: ${summary.min_clients_required} active nodes`}
           </div>
         </div>
 
@@ -614,74 +630,93 @@ export function CoordinatorDashboard({ onNavigate }) {
           </div>
 
           {/* SVG Line Chart */}
-          <div style={{ position: "relative", width: "100%", height: "200px", marginTop: "auto" }}>
-            <svg viewBox="0 0 400 160" style={{ width: "100%", height: "100%", overflow: "visible" }}>
-              {/* Grid Lines */}
-              <line x1="40" y1="20" x2="380" y2="20" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="40" y1="60" x2="380" y2="60" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="40" y1="100" x2="380" y2="100" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="40" y1="140" x2="380" y2="140" stroke="#e2e8f0" strokeWidth="1" />
+          <div style={{ position: "relative", width: "100%", height: "200px", marginTop: "auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {metricsHistory.length === 0 ? (
+              <div style={{ textAlign: "center", color: "var(--text-muted, #64748b)", fontSize: "0.85rem", padding: "1.5rem" }}>
+                <div style={{ fontWeight: 600, color: "var(--text-secondary, #334155)", marginBottom: "0.2rem" }}>
+                  No Training Rounds Executed
+                </div>
+                <span>Convergence curve will plot automatically once federated training rounds begin.</span>
+              </div>
+            ) : (
+              <svg viewBox="0 0 400 160" style={{ width: "100%", height: "100%", overflow: "visible" }}>
+                {/* Grid Lines */}
+                <line x1="40" y1="20" x2="380" y2="20" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="40" y1="60" x2="380" y2="60" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="40" y1="100" x2="380" y2="100" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="40" y1="140" x2="380" y2="140" stroke="#e2e8f0" strokeWidth="1" />
 
-              {/* Y-Axis Labels */}
-              <text x="15" y="24" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.90</text>
-              <text x="15" y="64" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.80</text>
-              <text x="15" y="104" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.70</text>
-              <text x="15" y="144" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.00</text>
+                {/* Y-Axis Labels */}
+                <text x="15" y="24" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">1.00</text>
+                <text x="15" y="64" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.75</text>
+                <text x="15" y="104" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.50</text>
+                <text x="15" y="144" fill="#94a3b8" fontSize="9" fontFamily="var(--font-mono, monospace)">0.00</text>
 
-              {/* Dice Line (Cyan/Blue) */}
-              {(activeMetricFilter === "all" || activeMetricFilter === "dice") && (
-                <>
-                  <polyline
-                    fill="none"
-                    stroke="#1a73e8"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    points="60,110 130,85 200,60 270,42 340,28"
-                  />
-                  {/* Data points */}
-                  {[
-                    { cx: 60, cy: 110, val: "0.74" },
-                    { cx: 130, cy: 85, val: "0.80" },
-                    { cx: 200, cy: 60, val: "0.84" },
-                    { cx: 270, cy: 42, val: "0.86" },
-                    { cx: 340, cy: 28, val: "0.88" },
-                  ].map((p, i) => (
-                    <circle key={i} cx={p.cx} cy={p.cy} r="4" fill="#ffffff" stroke="#1a73e8" strokeWidth="2.5" />
-                  ))}
-                </>
-              )}
+                {/* Dynamic Points for dice */}
+                {(activeMetricFilter === "all" || activeMetricFilter === "dice") && (
+                  <>
+                    <polyline
+                      fill="none"
+                      stroke="#1a73e8"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      points={metricsHistory
+                        .map((m, idx) => {
+                          const x = 60 + idx * Math.max(30, 280 / Math.max(1, metricsHistory.length - 1));
+                          const score = m.val_dice_mean || m.metrics?.val_dice_mean || 0;
+                          const y = 140 - score * 120;
+                          return `${x},${y}`;
+                        })
+                        .join(" ")}
+                    />
+                    {metricsHistory.map((m, idx) => {
+                      const x = 60 + idx * Math.max(30, 280 / Math.max(1, metricsHistory.length - 1));
+                      const score = m.val_dice_mean || m.metrics?.val_dice_mean || 0;
+                      const y = 140 - score * 120;
+                      return <circle key={idx} cx={x} cy={y} r="4" fill="#ffffff" stroke="#1a73e8" strokeWidth="2.5" />;
+                    })}
+                  </>
+                )}
 
-              {/* Loss Line (Red/Coral) */}
-              {(activeMetricFilter === "all" || activeMetricFilter === "loss") && (
-                <>
-                  <polyline
-                    fill="none"
-                    stroke="#ef4444"
-                    strokeWidth="2.5"
-                    strokeDasharray="4 3"
-                    strokeLinecap="round"
-                    points="60,40 130,68 200,95 270,115 340,128"
-                  />
-                  {[
-                    { cx: 60, cy: 40 },
-                    { cx: 130, cy: 68 },
-                    { cx: 200, cy: 95 },
-                    { cx: 270, cy: 115 },
-                    { cx: 340, cy: 128 },
-                  ].map((p, i) => (
-                    <circle key={i} cx={p.cx} cy={p.cy} r="3" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />
-                  ))}
-                </>
-              )}
+                {/* Dynamic Points for loss */}
+                {(activeMetricFilter === "all" || activeMetricFilter === "loss") && (
+                  <>
+                    <polyline
+                      fill="none"
+                      stroke="#ef4444"
+                      strokeWidth="2.5"
+                      strokeDasharray="4 3"
+                      strokeLinecap="round"
+                      points={metricsHistory
+                        .map((m, idx) => {
+                          const x = 60 + idx * Math.max(30, 280 / Math.max(1, metricsHistory.length - 1));
+                          const loss = m.loss || m.metrics?.val_loss || 0;
+                          const y = Math.min(140, Math.max(20, 20 + loss * 80));
+                          return `${x},${y}`;
+                        })
+                        .join(" ")}
+                    />
+                    {metricsHistory.map((m, idx) => {
+                      const x = 60 + idx * Math.max(30, 280 / Math.max(1, metricsHistory.length - 1));
+                      const loss = m.loss || m.metrics?.val_loss || 0;
+                      const y = Math.min(140, Math.max(20, 20 + loss * 80));
+                      return <circle key={idx} cx={x} cy={y} r="3" fill="#ffffff" stroke="#ef4444" strokeWidth="2" />;
+                    })}
+                  </>
+                )}
 
-              {/* X-Axis Round Labels */}
-              <text x="55" y="156" fill="#64748b" fontSize="9" fontFamily="var(--font-mono, monospace)">R1</text>
-              <text x="125" y="156" fill="#64748b" fontSize="9" fontFamily="var(--font-mono, monospace)">R2</text>
-              <text x="195" y="156" fill="#64748b" fontSize="9" fontFamily="var(--font-mono, monospace)">R3</text>
-              <text x="265" y="156" fill="#64748b" fontSize="9" fontFamily="var(--font-mono, monospace)">R4</text>
-              <text x="335" y="156" fill="#64748b" fontSize="9" fontFamily="var(--font-mono, monospace)">R5</text>
-            </svg>
+                {/* X-Axis Round Labels */}
+                {metricsHistory.map((m, idx) => {
+                  const x = 60 + idx * Math.max(30, 280 / Math.max(1, metricsHistory.length - 1));
+                  return (
+                    <text key={idx} x={x - 8} y="156" fill="#64748b" fontSize="9" fontFamily="var(--font-mono, monospace)">
+                      R{m.round || idx + 1}
+                    </text>
+                  );
+                })}
+              </svg>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: "1.25rem", justifyContent: "center", marginTop: "0.75rem", fontSize: "0.78rem" }}>
@@ -728,48 +763,55 @@ export function CoordinatorDashboard({ onNavigate }) {
                 color: "var(--text-secondary, #334155)",
               }}
             >
-              3 Nodes
+              {hospitals.length} Nodes Connected
             </span>
           </div>
 
           {/* Bar Chart Container */}
           <div style={{ display: "flex", flexDirection: "column", gap: "1.1rem", marginTop: "auto", padding: "0.5rem 0" }}>
-            {hospitals.map((h, i) => {
-              const scorePct = Math.round((h.best_local_dice || 0.88) * 100);
-              const barColors = ["#1a73e8", "#10b981", "#6366f1"];
-              const currentColor = barColors[i % barColors.length];
+            {hospitals.length === 0 ? (
+              <div style={{ padding: "2rem 1rem", textAlign: "center", color: "var(--text-muted, #64748b)", fontSize: "0.85rem" }}>
+                No active hospital nodes connected.
+                <div style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>Register or connect hospital clients to stream benchmark accuracy.</div>
+              </div>
+            ) : (
+              hospitals.map((h, i) => {
+                const scorePct = Math.round((h.best_local_dice || 0.0) * 100);
+                const barColors = ["#1a73e8", "#10b981", "#6366f1"];
+                const currentColor = barColors[i % barColors.length];
 
-              return (
-                <div key={h.hospital_id || i}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", marginBottom: "0.3rem" }}>
-                    <span style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)", textTransform: "capitalize" }}>
-                      {h.hospital_id.replace("_", " ")}
-                    </span>
-                    <span style={{ fontFamily: "var(--font-mono, monospace)", fontWeight: 700, color: currentColor }}>
-                      {(h.best_local_dice * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      height: "10px",
-                      background: "var(--bg-subtle, #f1f5f9)",
-                      borderRadius: "9999px",
-                      overflow: "hidden",
-                    }}
-                  >
+                return (
+                  <div key={h.hospital_id || i}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.82rem", marginBottom: "0.3rem" }}>
+                      <span style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)", textTransform: "capitalize" }}>
+                        {h.hospital_id.replace("_", " ")}
+                      </span>
+                      <span style={{ fontFamily: "var(--font-mono, monospace)", fontWeight: 700, color: currentColor }}>
+                        {((h.best_local_dice || 0) * 100).toFixed(1)}%
+                      </span>
+                    </div>
                     <div
                       style={{
-                        width: `${scorePct}%`,
-                        height: "100%",
-                        background: currentColor,
+                        height: "10px",
+                        background: "var(--bg-subtle, #f1f5f9)",
                         borderRadius: "9999px",
-                        transition: "width 1s ease",
+                        overflow: "hidden",
                       }}
-                    />
+                    >
+                      <div
+                        style={{
+                          width: `${scorePct}%`,
+                          height: "100%",
+                          background: currentColor,
+                          borderRadius: "9999px",
+                          transition: "width 1s ease",
+                        }}
+                      />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
 
             {/* Global Aggregated Baseline */}
             <div style={{ paddingTop: "0.4rem", borderTop: "1px dashed var(--border-subtle, #e2e8f0)" }}>
@@ -816,97 +858,106 @@ export function CoordinatorDashboard({ onNavigate }) {
             </p>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1.5rem", marginTop: "auto", padding: "0.5rem 0" }}>
-            {/* Donut Chart SVG */}
-            <div style={{ position: "relative", width: "130px", height: "130px" }}>
-              <svg viewBox="0 0 36 36" style={{ width: "100%", height: "100%", transform: "rotate(-90deg)" }}>
-                {/* Background Ring */}
-                <circle cx="18" cy="18" r="14" fill="none" stroke="#f1f5f9" strokeWidth="5" />
-                {/* Whole Tumor Segment */}
-                <circle
-                  cx="18"
-                  cy="18"
-                  r="14"
-                  fill="none"
-                  stroke="#10b981"
-                  strokeWidth="5"
-                  strokeDasharray={`${wtPct} 100`}
-                  strokeDashoffset="0"
-                />
-                {/* Tumor Core Segment */}
-                <circle
-                  cx="18"
-                  cy="18"
-                  r="14"
-                  fill="none"
-                  stroke="#1a73e8"
-                  strokeWidth="5"
-                  strokeDasharray={`${tcPct} 100`}
-                  strokeDashoffset={`-${wtPct}`}
-                />
-                {/* Enhancing Tumor Segment */}
-                <circle
-                  cx="18"
-                  cy="18"
-                  r="14"
-                  fill="none"
-                  stroke="#f59e0b"
-                  strokeWidth="5"
-                  strokeDasharray={`${etPct} 100`}
-                  strokeDashoffset={`-${wtPct + tcPct}`}
-                />
-              </svg>
-              {/* Center text */}
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <span style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary, #0f172a)", fontFamily: "var(--font-heading, sans-serif)" }}>
-                  BraTS
-                </span>
-                <span style={{ fontSize: "0.68rem", color: "var(--text-muted, #64748b)", fontWeight: 600 }}>3-Region</span>
+          {totalSubregions === 0 ? (
+            <div style={{ padding: "2rem 1rem", textAlign: "center", color: "var(--text-muted, #64748b)", fontSize: "0.85rem", marginTop: "auto" }}>
+              <div style={{ fontWeight: 600, color: "var(--text-secondary, #334155)", marginBottom: "0.2rem" }}>
+                No Segmentation Evaluated
+              </div>
+              <span>Sub-region distributions (WT, TC, ET) will calculate dynamically once global model evaluations run.</span>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1.5rem", marginTop: "auto", padding: "0.5rem 0" }}>
+              {/* Donut Chart SVG */}
+              <div style={{ position: "relative", width: "130px", height: "130px" }}>
+                <svg viewBox="0 0 36 36" style={{ width: "100%", height: "100%", transform: "rotate(-90deg)" }}>
+                  {/* Background Ring */}
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#f1f5f9" strokeWidth="5" />
+                  {/* Whole Tumor Segment */}
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="14"
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="5"
+                    strokeDasharray={`${wtPct} 100`}
+                    strokeDashoffset="0"
+                  />
+                  {/* Tumor Core Segment */}
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="14"
+                    fill="none"
+                    stroke="#1a73e8"
+                    strokeWidth="5"
+                    strokeDasharray={`${tcPct} 100`}
+                    strokeDashoffset={`-${wtPct}`}
+                  />
+                  {/* Enhancing Tumor Segment */}
+                  <circle
+                    cx="18"
+                    cy="18"
+                    r="14"
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="5"
+                    strokeDasharray={`${etPct} 100`}
+                    strokeDashoffset={`-${wtPct + tcPct}`}
+                  />
+                </svg>
+                {/* Center text */}
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <span style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--text-primary, #0f172a)", fontFamily: "var(--font-heading, sans-serif)" }}>
+                    BraTS
+                  </span>
+                  <span style={{ fontSize: "0.68rem", color: "var(--text-muted, #64748b)", fontWeight: 600 }}>3-Region</span>
+                </div>
+              </div>
+
+              {/* Legend & Scores */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.82rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#10b981" }} />
+                  <div>
+                    <div style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)" }}>Whole Tumor (WT)</div>
+                    <div style={{ fontSize: "0.74rem", color: "var(--text-muted, #64748b)", fontFamily: "var(--font-mono, monospace)" }}>
+                      Dice: {(wtScore * 100).toFixed(1)}% ({wtPct}%)
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#1a73e8" }} />
+                  <div>
+                    <div style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)" }}>Tumor Core (TC)</div>
+                    <div style={{ fontSize: "0.74rem", color: "var(--text-muted, #64748b)", fontFamily: "var(--font-mono, monospace)" }}>
+                      Dice: {(tcScore * 100).toFixed(1)}% ({tcPct}%)
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#f59e0b" }} />
+                  <div>
+                    <div style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)" }}>Enhancing Tumor (ET)</div>
+                    <div style={{ fontSize: "0.74rem", color: "var(--text-muted, #64748b)", fontFamily: "var(--font-mono, monospace)" }}>
+                      Dice: {(etScore * 100).toFixed(1)}% ({etPct}%)
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-
-            {/* Legend & Scores */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.82rem" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#10b981" }} />
-                <div>
-                  <div style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)" }}>Whole Tumor (WT)</div>
-                  <div style={{ fontSize: "0.74rem", color: "var(--text-muted, #64748b)", fontFamily: "var(--font-mono, monospace)" }}>
-                    Dice: {(wtScore * 100).toFixed(1)}% ({wtPct}%)
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#1a73e8" }} />
-                <div>
-                  <div style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)" }}>Tumor Core (TC)</div>
-                  <div style={{ fontSize: "0.74rem", color: "var(--text-muted, #64748b)", fontFamily: "var(--font-mono, monospace)" }}>
-                    Dice: {(tcScore * 100).toFixed(1)}% ({tcPct}%)
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: "#f59e0b" }} />
-                <div>
-                  <div style={{ fontWeight: 600, color: "var(--text-primary, #0f172a)" }}>Enhancing Tumor (ET)</div>
-                  <div style={{ fontSize: "0.74rem", color: "var(--text-muted, #64748b)", fontFamily: "var(--font-mono, monospace)" }}>
-                    Dice: {(etScore * 100).toFixed(1)}% ({etPct}%)
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -938,80 +989,119 @@ export function CoordinatorDashboard({ onNavigate }) {
               fontFamily: "var(--font-mono, monospace)",
               padding: "0.25rem 0.65rem",
               borderRadius: "9999px",
-              background: "var(--emerald-subtle, #ecfdf5)",
-              color: "var(--emerald-light, #059669)",
-              border: "1px solid var(--emerald-border, #a7f3d0)",
+              background: activeCount > 0 ? "var(--emerald-subtle, #ecfdf5)" : "var(--bg-subtle, #f8fafc)",
+              color: activeCount > 0 ? "var(--emerald-light, #059669)" : "var(--text-muted, #64748b)",
+              border: `1px solid ${activeCount > 0 ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
               fontWeight: 600,
             }}
           >
-            {hospitals.length} Hospitals Connected
+            {hospitals.length} Hospitals Registered ({activeCount} Active)
           </span>
         </div>
 
         {/* Hospital Cards Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem" }}>
-          {hospitals.map((h, i) => (
-            <div
-              key={h.hospital_id || i}
-              style={{
-                background: "var(--bg-subtle, #f8fafc)",
-                border: "1px solid var(--border-subtle, #e2e8f0)",
-                borderRadius: "var(--radius-lg, 16px)",
-                padding: "1.25rem",
-                display: "flex",
-                flexDirection: "column",
-                gap: "0.75rem",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span style={{ padding: "0.35rem", borderRadius: "8px", background: "#ffffff", border: "1px solid var(--border-subtle, #e2e8f0)" }}>
-                    <IconHospital size={16} />
-                  </span>
-                  <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary, #0f172a)", textTransform: "capitalize" }}>
-                    {h.hospital_id.replace("_", " ")}
-                  </span>
-                </div>
-
-                <span
+        {hospitals.length === 0 ? (
+          <div
+            style={{
+              padding: "2.5rem 1.5rem",
+              textAlign: "center",
+              background: "var(--bg-subtle, #f8fafc)",
+              borderRadius: "var(--radius-lg, 16px)",
+              border: "1px dashed var(--border-subtle, #e2e8f0)",
+              color: "var(--text-muted, #64748b)",
+              fontSize: "0.9rem",
+            }}
+          >
+            <div style={{ fontWeight: 600, color: "var(--text-secondary, #334155)", marginBottom: "0.25rem" }}>
+              No hospital node connected at the moment
+            </div>
+            <span>New hospital nodes will appear here once registered or connected to the federation.</span>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem" }}>
+            {hospitals.map((h, i) => {
+              const isActive = h.is_active || h.status === "ONLINE" || h.status === "READY" || h.status === "TRAINING";
+              return (
+                <div
+                  key={h.hospital_id || i}
                   style={{
-                    fontSize: "0.72rem",
-                    fontFamily: "var(--font-mono, monospace)",
-                    fontWeight: 600,
-                    padding: "0.15rem 0.5rem",
-                    borderRadius: "9999px",
-                    background: h.status === "ONLINE" ? "var(--emerald-subtle, #ecfdf5)" : "var(--brand-blue-subtle, #e8f0fe)",
-                    color: h.status === "ONLINE" ? "var(--emerald-light, #059669)" : "var(--brand-blue, #1a73e8)",
-                    border: `1px solid ${h.status === "ONLINE" ? "var(--emerald-border, #a7f3d0)" : "var(--brand-blue-border, #d2e3fc)"}`,
+                    background: "var(--bg-subtle, #f8fafc)",
+                    border: `1px solid ${isActive ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
+                    borderRadius: "var(--radius-lg, 16px)",
+                    padding: "1.25rem",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "0.75rem",
                   }}
                 >
-                  {h.status || "ONLINE"}
-                </span>
-              </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ padding: "0.35rem", borderRadius: "8px", background: "#ffffff", border: "1px solid var(--border-subtle, #e2e8f0)" }}>
+                        <IconHospital size={16} />
+                      </span>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary, #0f172a)" }}>
+                          {h.institution_name || h.hospital_id.replace("_", " ")}
+                        </div>
+                        <div style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono, monospace)", color: "var(--brand-blue, #1a73e8)" }}>
+                          {h.hospital_id}
+                        </div>
+                      </div>
+                    </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.82rem", paddingTop: "0.5rem", borderTop: "1px solid var(--border-subtle, #e2e8f0)" }}>
-                <div>
-                  <div style={{ color: "var(--text-muted, #64748b)", fontSize: "0.74rem" }}>Synchronized Round</div>
-                  <div style={{ fontWeight: 700, color: "var(--text-primary, #0f172a)", fontFamily: "var(--font-mono, monospace)" }}>
-                    Round {h.latest_round || 5}
+                    <span
+                      style={{
+                        fontSize: "0.72rem",
+                        fontFamily: "var(--font-mono, monospace)",
+                        fontWeight: 600,
+                        padding: "0.2rem 0.55rem",
+                        borderRadius: "9999px",
+                        background: isActive ? "var(--emerald-subtle, #ecfdf5)" : "var(--bg-subtle, #f1f5f9)",
+                        color: isActive ? "var(--emerald-light, #059669)" : "var(--text-muted, #64748b)",
+                        border: `1px solid ${isActive ? "var(--emerald-border, #a7f3d0)" : "var(--border-subtle, #e2e8f0)"}`,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "0.3rem",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: "6px",
+                          height: "6px",
+                          borderRadius: "50%",
+                          background: isActive ? "var(--emerald-primary, #10b981)" : "#94a3b8",
+                        }}
+                      />
+                      {isActive ? "ACTIVE • ONLINE" : "INACTIVE • OFFLINE"}
+                    </span>
+                  </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", fontSize: "0.82rem", paddingTop: "0.5rem", borderTop: "1px solid var(--border-subtle, #e2e8f0)" }}>
+                  <div>
+                    <div style={{ color: "var(--text-muted, #64748b)", fontSize: "0.74rem" }}>Synchronized Round</div>
+                    <div style={{ fontWeight: 700, color: "var(--text-primary, #0f172a)", fontFamily: "var(--font-mono, monospace)" }}>
+                      Round {h.latest_round || 0}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ color: "var(--text-muted, #64748b)", fontSize: "0.74rem" }}>Best Local Dice</div>
+                    <div style={{ fontWeight: 700, color: "var(--emerald-light, #059669)", fontFamily: "var(--font-mono, monospace)" }}>
+                      {((h.best_local_dice || 0.0) * 100).toFixed(1)}%
+                    </div>
                   </div>
                 </div>
 
-                <div>
-                  <div style={{ color: "var(--text-muted, #64748b)", fontSize: "0.74rem" }}>Best Local Dice</div>
-                  <div style={{ fontWeight: 700, color: "var(--emerald-light, #059669)", fontFamily: "var(--font-mono, monospace)" }}>
-                    {((h.best_local_dice || 0.88) * 100).toFixed(1)}%
-                  </div>
+                <div style={{ fontSize: "0.75rem", color: "var(--text-muted, #64748b)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  <IconShieldCheck size={14} />
+                  <span>Zero-Raw-Data: Model Weight Masks Only</span>
                 </div>
               </div>
-
-              <div style={{ fontSize: "0.75rem", color: "var(--text-muted, #64748b)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                <IconShieldCheck size={14} />
-                <span>Zero-Raw-Data: Model Weight Masks Only</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
+        )}
       </div>
     </div>
   );
