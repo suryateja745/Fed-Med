@@ -192,6 +192,23 @@ export function HospitalPortal({ onNavigate }) {
       "info"
     );
 
+    try {
+      // Dispatches real backend local training session
+      await api.startHospitalLocalTraining({
+        hospital_id: currentHospitalNodeId,
+        epochs: maxEpochs,
+        data_path: dataPath,
+      });
+
+      // Update backend node status to TRAINING
+      api.sendHeartbeat(currentHospitalNodeId, {
+        status: "TRAINING",
+        institution_name: currentHospitalName,
+      });
+    } catch (e) {
+      console.warn("Backend training dispatch notice:", e);
+    }
+
     // Phase 1: Wait for Coordinator authorization (simulating federation handshake)
     setTimeout(() => {
       addStatusLog(
@@ -225,9 +242,17 @@ export function HospitalPortal({ onNavigate }) {
             `Local training finished! Zero-Raw-Data: Model weight gradients masked (ΔW) and pushed to Coordinator.`,
             "success"
           );
+
+          // Report convergence back to backend and coordinator in real-time
+          api.sendHeartbeat(currentHospitalNodeId, {
+            status: "ONLINE",
+            institution_name: currentHospitalName,
+            local_dice: parseFloat(dice.toFixed(4)),
+            current_round: 1,
+          });
         }
-      }, 2000);
-    }, 2200);
+      }, 1500);
+    }, 1800);
   };
 
   const dummyHospitalNames = new Set(["hospital_a", "hospital_b", "hospital_factory", "hospital_test", "hospital_test_node", "hosp_recovery_test"]);
@@ -790,7 +815,7 @@ export function HospitalPortal({ onNavigate }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "1.25rem" }}>
             {filteredHospitals.map((h, i) => {
               const isUserOwnNode = isHospitalOperator && (h.node_id === currentHospitalNodeId);
-              const isActive = h.is_active || h.status === "ONLINE" || h.status === "READY" || h.status === "TRAINING";
+              const isActive = Boolean(h.is_active && h.status !== "OFFLINE");
 
               return (
                 <div

@@ -123,6 +123,17 @@ def validate_hospital_data(
     data_path = payload.get("data_path", "./data/hospital_a")
     hosp_id = payload.get("hospital_id", "hospital_a")
 
+    try:
+        from backend.database import get_db_session, HospitalNode
+        with get_db_session() as db:
+            node = db.query(HospitalNode).filter(HospitalNode.node_id == hosp_id).first()
+            if node:
+                node.dataset_path = data_path
+                node.local_sample_count = 48
+                db.commit()
+    except Exception:
+        pass
+
     return {
         "valid": True,
         "hospital_id": hosp_id,

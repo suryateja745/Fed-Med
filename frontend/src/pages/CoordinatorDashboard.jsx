@@ -89,14 +89,22 @@ export function CoordinatorDashboard({ onNavigate }) {
   const handleUpdateGlobalModel = async () => {
     setIsUpdatingGlobalModel(true);
     setActionNotice({ type: "info", msg: "Aggregating hospital weights via Ciphertext FedAvg..." });
-    setTimeout(() => {
-      setIsUpdatingGlobalModel(false);
+    try {
+      const res = await api.updateGlobalModel();
       setActionNotice({
         type: "success",
-        msg: "Global 3D U-Net weights consolidated & AES-256-GCM checkpoint minted!",
+        msg: res.message || `Global 3D U-Net weights consolidated & AES-256-GCM checkpoint minted (Round ${res.round})!`,
       });
-      setTimeout(() => setActionNotice(null), 5000);
-    }, 1800);
+      fetchDashboard();
+    } catch (err) {
+      setActionNotice({
+        type: "error",
+        msg: err.message || "Failed to update global model.",
+      });
+    } finally {
+      setIsUpdatingGlobalModel(false);
+      setTimeout(() => setActionNotice(null), 6000);
+    }
   };
 
   const dummyHospitalNames = new Set(["hospital_a", "hospital_b", "hospital_factory", "hospital_test", "hospital_test_node", "hosp_recovery_test"]);
@@ -109,7 +117,7 @@ export function CoordinatorDashboard({ onNavigate }) {
     return true;
   });
 
-  const activeHospitals = hospitals.filter(h => h.is_active || h.status === "ONLINE" || h.status === "READY" || h.status === "TRAINING");
+  const activeHospitals = hospitals.filter(h => Boolean(h.is_active && h.status !== "OFFLINE"));
   const activeCount = activeHospitals.length;
   const inactiveCount = hospitals.length - activeCount;
 
@@ -334,6 +342,18 @@ export function CoordinatorDashboard({ onNavigate }) {
                 <IconLayers size={16} />
                 <span>{isUpdatingGlobalModel ? "Consolidating..." : "Update Global Model"}</span>
               </button>
+
+              {onNavigate && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-md"
+                  onClick={() => onNavigate("simulation")}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+                >
+                  <IconActivity size={16} />
+                  <span>Simulation Testbed</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -1020,7 +1040,7 @@ export function CoordinatorDashboard({ onNavigate }) {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "1rem" }}>
             {hospitals.map((h, i) => {
-              const isActive = h.is_active || h.status === "ONLINE" || h.status === "READY" || h.status === "TRAINING";
+              const isActive = Boolean(h.is_active && h.status !== "OFFLINE");
               return (
                 <div
                   key={h.hospital_id || i}

@@ -277,11 +277,29 @@ class BackendServices:
         # 2. Merge with dynamic in-memory registry
         with self._hospitals_lock:
             for h_id, reg in self._registered_hospitals.items():
+                last_hb_str = reg.get("last_heartbeat")
+                reg_is_active = False
+                diff_sec = 999999
+                if last_hb_str:
+                    try:
+                        hb_dt = datetime.fromisoformat(last_hb_str)
+                        if hb_dt.tzinfo is None:
+                            hb_dt = hb_dt.replace(tzinfo=timezone.utc)
+                        diff_sec = (now - hb_dt).total_seconds()
+                        reg_is_active = (diff_sec <= 20)
+                    except Exception:
+                        pass
+
+                cur_status = "ONLINE" if reg_is_active else "OFFLINE"
+                reg["status"] = cur_status
+                reg["is_active"] = reg_is_active
+
                 if h_id in hospitals_map:
                     hospitals_map[h_id].update({
                         "institution_name": reg.get("institution_name", hospitals_map[h_id]["institution_name"]),
-                        "status": reg.get("status", hospitals_map[h_id].get("status")),
-                        "is_active": reg.get("is_active", hospitals_map[h_id].get("is_active", False)),
+                        "status": cur_status,
+                        "is_active": reg_is_active,
+                        "last_seen_seconds": int(diff_sec) if diff_sec < 999999 else hospitals_map[h_id].get("last_seen_seconds", 999999),
                         "latest_round": reg.get("current_round", hospitals_map[h_id].get("latest_round", 0)),
                         "best_local_dice": reg.get("latest_local_dice", hospitals_map[h_id].get("best_local_dice", 0.0)),
                     })
@@ -289,8 +307,9 @@ class BackendServices:
                     hospitals_map[h_id] = {
                         "hospital_id": h_id,
                         "institution_name": reg.get("institution_name", "Registered Node"),
-                        "status": reg.get("status", "ONLINE"),
-                        "is_active": reg.get("is_active", True),
+                        "status": cur_status,
+                        "is_active": reg_is_active,
+                        "last_seen_seconds": int(diff_sec),
                         "latest_round": reg.get("current_round", 0),
                         "best_local_dice": reg.get("latest_local_dice", 0.0),
                         "last_update": reg.get("last_heartbeat", reg.get("registered_at")),

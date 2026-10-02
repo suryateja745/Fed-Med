@@ -116,8 +116,9 @@ def create_app(config: BackendConfig = None) -> FastAPI:
 
 
     @app.get("/health", tags=["Health"])
+    @app.get(f"{api_prefix}/health", tags=["Health"])
     def health():
-        """Health check endpoint for container orchestrators and load balancers."""
+        """Health check endpoint for container orchestrators, load balancers, and UI polling."""
         return {"status": "HEALTHY", "timestamp": datetime.now(timezone.utc).isoformat()}
 
     return app

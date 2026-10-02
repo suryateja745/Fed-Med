@@ -48,27 +48,10 @@ export const api = {
         return data;
       }
       const err = await res.json().catch(() => ({ detail: "Login failed" }));
-      throw new Error(err.detail || "Authentication failed");
+      throw new Error(err.detail || "Invalid username or password");
     } catch (e) {
-      // If network failure or backend not yet started, provide resilient credential verification
       if (e.message.includes("Failed to fetch") || e.name === "TypeError") {
-        const lowerUser = username.toLowerCase();
-        const role = lowerUser.includes("admin") || lowerUser.includes("coord") ? "ADMIN" : "HOSPITAL_STAFF";
-        const fallbackUser = {
-          username: username,
-          role: role,
-          institution_name: role === "ADMIN" ? "FedMed Central Coordinator" : "General Clinical Hospital",
-          hospital_node_id: role === "HOSPITAL_STAFF" ? "NODE-HOSP-A" : null,
-        };
-        const mockData = {
-          access_token: "mock-jwt-token-" + Date.now(),
-          refresh_token: "mock-refresh-token-" + Date.now(),
-          user: fallbackUser,
-        };
-        localStorage.setItem("fedmed_access_token", mockData.access_token);
-        localStorage.setItem("fedmed_refresh_token", mockData.refresh_token);
-        localStorage.setItem("fedmed_user", JSON.stringify(mockData.user));
-        return mockData;
+        throw new Error("Unable to connect to FedMed API server at http://127.0.0.1:8000. Please ensure the backend is running.");
       }
       throw e;
     }
@@ -92,20 +75,7 @@ export const api = {
       throw new Error(err.detail || "Registration failed");
     } catch (e) {
       if (e.message.includes("Failed to fetch") || e.name === "TypeError") {
-        const mockData = {
-          access_token: "mock-jwt-token-" + Date.now(),
-          refresh_token: "mock-refresh-token-" + Date.now(),
-          user: {
-            username: payload.username,
-            role: payload.role || "HOSPITAL_STAFF",
-            institution_name: payload.institution_name || "General Hospital",
-            hospital_node_id: payload.hospital_node_id || null,
-          },
-        };
-        localStorage.setItem("fedmed_access_token", mockData.access_token);
-        localStorage.setItem("fedmed_refresh_token", mockData.refresh_token);
-        localStorage.setItem("fedmed_user", JSON.stringify(mockData.user));
-        return mockData;
+        throw new Error("Unable to connect to FedMed API server at http://127.0.0.1:8000. Please ensure the backend is running.");
       }
       throw e;
     }
@@ -287,75 +257,67 @@ export const api = {
     return await res.json();
   },
 
+  async updateGlobalModel() {
+    const res = await fetch(`${API_BASE_URL}/models/aggregate`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Aggregation failed" }));
+      throw new Error(err.detail || "Failed to update global model");
+    }
+    return await res.json();
+  },
+
   // -------------------------------------------------------------------------
   // Control & Federation Triggers
   // -------------------------------------------------------------------------
   async startRound(payload = {}) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/control/train/start`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: jsonBody(payload),
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Training start fallback triggered:", e);
+    const res = await fetch(`${API_BASE_URL}/control/train/start`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: jsonBody(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Failed to initiate federated training round" }));
+      throw new Error(err.detail || "Failed to initiate federated training round");
     }
-    return {
-      status: "TRAINING_INITIATED",
-      message: `Federated training round initiated with strategy '${payload.strategy || "FedMedStrategy"}'.`,
-      target_rounds: payload.num_rounds || 10,
-      min_clients: payload.min_clients || 2,
-      strategy: payload.strategy || "FedMedStrategy",
-      timestamp: new Date().toISOString(),
-    };
+    return await res.json();
   },
 
   async stopRound() {
-    try {
-      const res = await fetch(`${API_BASE_URL}/control/train/stop`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Training stop fallback triggered:", e);
+    const res = await fetch(`${API_BASE_URL}/control/train/stop`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Failed to halt federated training" }));
+      throw new Error(err.detail || "Failed to halt federated training");
     }
-    return {
-      status: "STOPPED",
-      stopped_jobs_count: 1,
-      timestamp: new Date().toISOString(),
-    };
+    return await res.json();
   },
 
   async triggerSimulation(payload = {}) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/control/simulate`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: jsonBody(payload),
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Simulation fallback triggered:", e);
+    const res = await fetch(`${API_BASE_URL}/control/simulate`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: jsonBody(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Failed to launch federated simulation" }));
+      throw new Error(err.detail || "Failed to launch federated simulation");
     }
-    return {
-      status: "SIMULATION_QUEUED",
-      job_id: `sim_${Date.now()}`,
-      message: `Simulation queued across ${payload.num_clients || 3} hospital nodes.`,
-      num_clients: payload.num_clients || 3,
-      num_rounds: payload.num_rounds || 5,
-      partition_type: payload.partition_type || "dirichlet_non_iid",
-      timestamp: new Date().toISOString(),
-    };
+    return await res.json();
   },
 
   async getJobs() {
     try {
-      const res = await fetch(`${API_BASE_URL}/control/jobs`);
+      const res = await fetch(`${API_BASE_URL}/control/jobs`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) return await res.json();
     } catch (e) {
-      // Fallback
+      console.warn("Unable to fetch background jobs:", e);
     }
     return { total_jobs: 0, jobs: [] };
   },
@@ -364,71 +326,42 @@ export const api = {
   // Hospital Local Node Operations
   // -------------------------------------------------------------------------
   async validateHospitalData(dataPath, hospitalId) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/hospitals/validate-data`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: jsonBody({ data_path: dataPath, hospital_id: hospitalId }),
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Using offline validation response:", e);
+    const res = await fetch(`${API_BASE_URL}/hospitals/validate-data`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: jsonBody({ data_path: dataPath, hospital_id: hospitalId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Validation failed" }));
+      throw new Error(err.detail || "Data validation failed");
     }
-    // Simulation / local fallback verification
-    return {
-      valid: true,
-      scans_detected: 48,
-      modalities: ["T1", "T1ce", "T2", "FLAIR"],
-      labels_found: true,
-      subregions: ["Whole Tumor (WT)", "Tumor Core (TC)", "Enhancing Tumor (ET)"],
-      voxel_spacing: "1.0 x 1.0 x 1.0 mm (Isotropic)",
-      message: `Successfully validated 48 3D MRI scans at '${dataPath}'. Dataset structure matches BraTS multi-parametric protocols.`,
-    };
+    return await res.json();
   },
 
   async preprocessHospitalData(dataPath, hospitalId) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/hospitals/preprocess-data`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: jsonBody({ data_path: dataPath, hospital_id: hospitalId }),
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Using offline preprocessing response:", e);
+    const res = await fetch(`${API_BASE_URL}/hospitals/preprocess-data`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: jsonBody({ data_path: dataPath, hospital_id: hospitalId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Preprocessing failed" }));
+      throw new Error(err.detail || "Preprocessing failed");
     }
-    return {
-      success: true,
-      steps_completed: [
-        "Intensity Z-score normalization across foreground voxels",
-        "Resampled to isotropic 1.0mm voxel grid (128x128x128 ROI crop)",
-        "Zero-raw-data differential privacy noise calibration (ε = 2.5, δ = 1e-5)",
-        "Local tensor cache generated for 3D U-Net PyTorch loader",
-      ],
-      cache_size_mb: 284.6,
-      message: "Preprocessing completed. 48 MRI patient volumes cached and ready for local federated epoch execution.",
-    };
+    return await res.json();
   },
 
   async startHospitalLocalTraining(payload) {
-    try {
-      const res = await fetch(`${API_BASE_URL}/hospitals/train-local`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: jsonBody(payload),
-      });
-      if (res.ok) return await res.json();
-    } catch (e) {
-      console.warn("Using offline training dispatch fallback:", e);
+    const res = await fetch(`${API_BASE_URL}/hospitals/train-local`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: jsonBody(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Local training dispatch failed" }));
+      throw new Error(err.detail || "Local training dispatch failed");
     }
-    return {
-      success: true,
-      session_id: `hosp_sess_${Date.now()}`,
-      status: "TRAINING_STARTED",
-      epochs: payload.epochs || 5,
-      batch_size: payload.batch_size || 2,
-      learning_rate: payload.learning_rate || 0.0002,
-    };
+    return await res.json();
   },
 };
 

@@ -44,9 +44,14 @@ def _run_background_simulation(
         services.active_jobs[job_id]["status"] = "COMPLETED"
         services.active_jobs[job_id]["summary"] = summary
         services.active_jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            services.api_bridge.export_dashboard_json()
+        except Exception:
+            pass
     except Exception as e:
+        import traceback
         services.active_jobs[job_id]["status"] = "FAILED"
-        services.active_jobs[job_id]["error"] = str(e)
+        services.active_jobs[job_id]["error"] = f"{str(e)}: {traceback.format_exc()}"
         services.active_jobs[job_id]["failed_at"] = datetime.now(timezone.utc).isoformat()
 
 

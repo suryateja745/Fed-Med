@@ -89,6 +89,15 @@ export function Footer({ onNavigate }) {
                 </li>
                 <li>
                   <button
+                    onClick={() => onNavigate && onNavigate("simulation")}
+                    className="footer-link-item"
+                    style={{ background: "none", border: "none", padding: 0 }}
+                  >
+                    Simulation Testbed
+                  </button>
+                </li>
+                <li>
+                  <button
                     onClick={() => onNavigate && onNavigate("auth")}
                     className="footer-link-item"
                     style={{ background: "none", border: "none", padding: 0 }}

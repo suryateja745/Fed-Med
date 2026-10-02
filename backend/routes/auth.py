@@ -145,6 +145,7 @@ def register_user(
     if user_role == UserRole.HOSPITAL_STAFF:
         import secrets
         hosp_node_id = req.hospital_node_id.strip() if req.hospital_node_id else f"NODE-{req.username.strip().upper()[:8]}"
+        new_user.hospital_node_id = hosp_node_id
         existing_hosp_node = db.query(HospitalNode).filter(HospitalNode.node_id == hosp_node_id).first()
         if not existing_hosp_node:
             new_hosp_node = HospitalNode(
@@ -160,6 +161,19 @@ def register_user(
             )
             db.add(new_hosp_node)
             db.flush()
+        else:
+            existing_hosp_node.last_heartbeat = datetime.now(timezone.utc)
+            existing_hosp_node.status = NodeStatus.ONLINE
+            db.flush()
+
+        try:
+            from backend.dependencies import BackendServices
+            BackendServices.get_instance().record_heartbeat(hosp_node_id, {
+                "status": "ONLINE",
+                "institution_name": req.institution_name.strip() or f"{req.username.strip()} Hospital",
+            })
+        except Exception:
+            pass
 
     # 6. Audit log
     client_ip = request.client.host if request.client else "unknown"
@@ -234,6 +248,22 @@ def login_user(
     # Update login timestamp
     user.last_login_at = datetime.now(timezone.utc)
     db.flush()
+
+    # If hospital staff, refresh node heartbeat and presence
+    if user.hospital_node_id:
+        try:
+            node = db.query(HospitalNode).filter(HospitalNode.node_id == user.hospital_node_id).first()
+            if node:
+                node.last_heartbeat = datetime.now(timezone.utc)
+                node.status = NodeStatus.ONLINE
+                db.flush()
+            from backend.dependencies import BackendServices
+            BackendServices.get_instance().record_heartbeat(user.hospital_node_id, {
+                "status": "ONLINE",
+                "institution_name": user.institution_name,
+            })
+        except Exception:
+            pass
 
     # Log audit event
     client_ip = request.client.host if request.client else "unknown"

@@ -20,8 +20,11 @@ def get_dashboard(services: BackendServices = Depends(get_services)) -> Dict[str
     """
     state = services.api_bridge.get_full_dashboard_state()
     # Augment with dynamic registered hospital list
-    state["participating_hospitals"] = services.get_all_hospitals()
-    state["federation_summary"]["active_hospitals_count"] = len(state["participating_hospitals"])
+    hospitals = services.get_all_hospitals()
+    active_count = len([h for h in hospitals if h.get("is_active")])
+    state["participating_hospitals"] = hospitals
+    state["federation_summary"]["active_hospitals_count"] = active_count
+    state["federation_summary"]["total_registered_hospitals"] = len(hospitals)
     return state
 
 
@@ -32,6 +35,7 @@ def get_status(services: BackendServices = Depends(get_services)) -> Dict[str, A
     """
     ckpt_info = services.api_bridge.get_latest_checkpoint_info()
     hospitals = services.get_all_hospitals()
+    active_count = len([h for h in hospitals if h.get("is_active")])
     training_jobs = [j for j in services.active_jobs.values() if j.get("status") == "RUNNING"]
 
     return {
@@ -40,7 +44,8 @@ def get_status(services: BackendServices = Depends(get_services)) -> Dict[str, A
         "target_rounds": services.fl_config.get("federation", {}).get("num_rounds", 10),
         "best_round": ckpt_info["best_round"],
         "best_dice_score": ckpt_info["best_dice_score"],
-        "active_hospitals_count": len(hospitals),
+        "active_hospitals_count": active_count,
+        "total_registered_hospitals": len(hospitals),
         "min_clients_required": services.fl_config.get("federation", {}).get("min_fit_clients", 2),
         "active_training_jobs": len(training_jobs),
     }

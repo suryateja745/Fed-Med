@@ -53,9 +53,16 @@ from federation.utils.logger import setup_logger
 
 try:
     import flwr as fl
+    from flwr.common import Code, Status
     HAS_FLWR = True
 except ImportError:
     HAS_FLWR = False
+    class Code:
+        OK = 0
+    class Status:
+        def __init__(self, code=Code.OK, message=""):
+            self.code = code
+            self.message = message
 
 
 # Simulation Dataset & Client Factory
@@ -172,17 +179,23 @@ def build_client_factory(
             device=target_device,
         )
 
-        if HAS_FLWR:
-            try:
-                return fedmed_client.to_client()
-            except Exception:
-                return fedmed_client
+        # In-process simulation calls fit(parameters, config) and evaluate(parameters, config)
+        # directly on NumPyClient instances.
         return fedmed_client
 
     return client_fn
 
 
 # Simulation Runner
+
+def run_federated_simulation(*args, **kwargs):
+    """Bridge alias for run_simulation supporting alternate parameter names."""
+    if "output_dir" in kwargs and "plot_dir" not in kwargs:
+        kwargs["plot_dir"] = kwargs.pop("output_dir")
+    if "fast_dev_run" in kwargs and "dry_run" not in kwargs:
+        kwargs["dry_run"] = kwargs.pop("fast_dev_run")
+    return run_simulation(*args, **kwargs)
+
 
 def run_simulation(
     num_clients: int = 3,
@@ -296,26 +309,45 @@ def run_simulation(
             hospital_name = hospital_map[cid_str]
             client_inst = client_factory(cid_str)
 
+            # Resolve underlying NumPy client if wrapped
+            actual_client = client_inst
+            if hasattr(client_inst, "numpy_client"):
+                actual_client = client_inst.numpy_client
+
             # Fit (Local Training)
-            if hasattr(client_inst, "fit"):
-                params_out, num_examples, metrics = client_inst.fit(current_parameters, fit_config)
-            elif hasattr(client_inst, "numpy_client"):
-                params_out, num_examples, metrics = client_inst.numpy_client.fit(current_parameters, fit_config)
+            if hasattr(actual_client, "fit"):
+                params_out, num_examples, metrics = actual_client.fit(current_parameters, fit_config)
             else:
                 params_out, num_examples, metrics = current_parameters, 1, {}
 
-            fit_results.append((client_inst, FitRes(parameters=ndarrays_to_parameters(params_out) if HAS_FLWR else None, num_examples=num_examples, metrics=metrics), params_out))
+            client_status = Status(code=Code.OK, message="Success")
+            fit_results.append((
+                client_inst,
+                FitRes(
+                    status=client_status,
+                    parameters=ndarrays_to_parameters(params_out) if HAS_FLWR else None,
+                    num_examples=num_examples,
+                    metrics=metrics,
+                ),
+                params_out,
+            ))
             participating_cids.append(hospital_name)
 
             # Evaluate (Local Validation)
-            if hasattr(client_inst, "evaluate"):
-                loss, eval_examples, eval_metrics = client_inst.evaluate(params_out, eval_config)
-            elif hasattr(client_inst, "numpy_client"):
-                loss, eval_examples, eval_metrics = client_inst.numpy_client.evaluate(params_out, eval_config)
+            if hasattr(actual_client, "evaluate"):
+                loss, eval_examples, eval_metrics = actual_client.evaluate(params_out, eval_config)
             else:
                 loss, eval_examples, eval_metrics = 1.0, 1, {}
 
-            eval_results.append((client_inst, EvaluateRes(loss=loss, num_examples=eval_examples, metrics=eval_metrics)))
+            eval_results.append((
+                client_inst,
+                EvaluateRes(
+                    status=client_status,
+                    loss=loss,
+                    num_examples=eval_examples,
+                    metrics=eval_metrics,
+                ),
+            ))
 
         # Aggregate Parameters
         # Strategy aggregation
