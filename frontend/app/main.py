@@ -1,1386 +1,416 @@
-import requests
+
+from __future__ import annotations
+
 import pandas as pd
+import requests
 import streamlit as st
 
 
-# -------------------------------------------------------------------
-# Page  configuration
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# FedMed dashboard configuration
+# ---------------------------------------------------------
 
 st.set_page_config(
-    page_title="FedMed - Federated  FedMed Hospital Dashboard",
-    page_icon="H",
+    page_title="FedMed | Federated Learning Dashboard",
+    page_icon="🏥",
     layout="wide",
 )
 
+API_BASE_URL = "http://127.0.0.1:8000"
+HEALTH_URL = f"{API_BASE_URL}/health"
+STATUS_URL = f"{API_BASE_URL}/api/training/status"
 
-# -------------------------------------------------------------------
-# Backend API URL
-# -------------------------------------------------------------------
-
-API_URL = "http://127.0.0.1:8000/api/training/status"
-
-
-def get_training_status():
-    """Fetch current federated training state from FastAPI."""
-    try:
-        response = requests.get(
-            API_URL,
-            timeout=3,
-        )
-        response.raise_for_status()
-        return response.json()
-
-    except requests.RequestException:
-        return None
-
-
-training_data = get_training_status()
-
-
-# -------------------------------------------------------------------
-# Hospital definitions
-# -------------------------------------------------------------------
-
-default_hospitals = [
-    {
-        "id": "hospital-1",
-        "name": "Hospital 1",
-        "dataset": "synthetic-MRI-dataset",
-    },
-    {
-        "id": "hospital-2",
-        "name": "Hospital 2",
-        "dataset": "synthetic-MRI-dataset",
-    },
-    {
-        "id": "hospital-3",
-        "name": "Hospital 3",
-        "dataset": "synthetic-MRI-dataset",
-    },
+EXPECTED_HOSPITALS = [
+    "hospital-1",
+    "hospital-2",
+    "hospital-3",
 ]
 
 
-# -------------------------------------------------------------------
-# Helper functions
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# API helpers
+# ---------------------------------------------------------
 
-def normalize_hospital_status(status):
-    """Convert backend status into a consistent UI status."""
+def fetch_json(url: str) -> tuple[dict | None, str | None]:
+    """Fetch one JSON response from the local FastAPI server."""
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
 
-    value = str(
-        status or ""
-    ).strip().lower()
+        if not isinstance(data, dict):
+            return None, "The API response was not a JSON object."
 
-    mapping = {
-        "connected": "Connected",
-        "ready": "Connected",
-        "online": "Connected",
+        return data, None
 
-        "training": "Training",
-        "running": "Training",
+    except requests.RequestException as exc:
+        return None, str(exc)
 
-        "trained": "Trained",
-        "completed": "Trained",
-        "encrypted": "Trained",
-
-        "retry": "Retrying",
-        "retrying": "Retrying",
-
-        "timeout": "Timeout",
-
-        "failed": "Failed",
-        "failure": "Failed",
-
-        "disconnected": "Disconnected",
-        "offline": "Disconnected",
-    }
-
-    return mapping.get(
-        value,
-        "Disconnected",
-    )
+    except ValueError:
+        return None, "The API returned invalid JSON."
 
 
-def normalize_rounds(data):
-    """Support both list and dictionary round formats."""
-
-    normalized = []
-
-    if isinstance(data, list):
-
-        for item in data:
-
-            if isinstance(item, dict):
-                normalized.append(
-                    dict(item)
-                )
-
-    elif isinstance(data, dict):
-
-        for key, value in data.items():
-
-            if isinstance(value, dict):
-
-                item = dict(value)
-
-                if "round" not in item:
-
-                    try:
-                        item["round"] = int(key)
-
-                    except (
-                        TypeError,
-                        ValueError,
-                    ):
-                        pass
-
-                normalized.append(item)
-
-    def round_key(item):
-
-        try:
-            return int(
-                item.get(
-                    "round",
-                    0,
-                )
-            )
-
-        except (
-            TypeError,
-            ValueError,
-        ):
-            return 0
-
-    normalized.sort(
-        key=round_key
-    )
-
-    return normalized
+def safe_number(value, default=0):
+    """Convert a numeric value safely for dashboard display."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
-def latest_loss(rounds):
-    """Return the most recent available round loss."""
-
-    for item in reversed(rounds):
-
-        loss = item.get("loss")
-
-        if loss is not None:
-
-            try:
-                return float(loss)
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-                continue
-
-    return None
-
-
-# -------------------------------------------------------------------
-# Training data  state
-# -------------------------------------------------------------------
-
-backend_hospitals = {}
-retries = {}
-failures = []
-rounds_data = []
-
-current_round = 0
-total_rounds = 3
-training_status = "idle"
-
-security = {}
-
-
-if training_data:
-
-    backend_hospitals = (
-        training_data.get(
-            "hospitals",
-            {},
-        )
-        or {}
-    )
-
-    retries = (
-        training_data.get(
-            "retries",
-            {},
-        )
-        or {}
-    )
-
-    failures = (
-        training_data.get(
-            "failures",
-            [],
-        )
-        or []
-    )
-
-    rounds_data = (
-        training_data.get(
-            "rounds",
-            [],
-        )
-        or []
-    )
-
-    security = (
-        training_data.get(
-            "security",
-            {},
-        )
-        or {}
-    )
-
-    training_status = str(
-        training_data.get(
-            "status",
-            "idle",
-        )
-    ).lower()
+def display_number(value, digits=4):
+    """Display an available metric without inventing a value."""
+    if value is None:
+        return "N/A"
 
     try:
-
-        current_round = int(
-            training_data.get(
-                "current_round",
-                0,
-            )
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
-        current_round = 0
-
-    try:
-
-        total_rounds = int(
-            training_data.get(
-                "total_rounds",
-                3,
-            )
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
-        total_rounds = 3
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "N/A"
 
 
-# -------------------------------------------------------------------
-# Round history
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# Header and refresh
+# ---------------------------------------------------------
 
-round_history = normalize_rounds(
-    rounds_data
-)
-
-global_loss = latest_loss(
-    round_history
-)
-
-completed_rounds = sum(
-    str(
-        item.get(
-            "status",
-            "",
-        )
-    ).lower()
-    in {
-        "completed",
-        "complete",
-        "success",
-        "completed_with_failure",
-    }
-    for item in round_history
-)
-
-
-# -------------------------------------------------------------------
-# Hospital records
-# -------------------------------------------------------------------
-
-hospitals = []
-
-for hospital in default_hospitals:
-
-    hospital_id = hospital["id"]
-
-    raw_status = backend_hospitals.get(
-        hospital_id,
-        "disconnected",
-    )
-
-    hospital_status = (
-        normalize_hospital_status(
-            raw_status
-        )
-    )
-
-    try:
-
-        retry_count = int(
-            retries.get(
-                hospital_id,
-                0,
-            )
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
-        retry_count = 0
-
-    hospitals.append(
-        {
-            **hospital,
-            "status": hospital_status,
-            "retry_count": retry_count,
-        }
-    )
-
-
-# -------------------------------------------------------------------
-# Security values
-# -------------------------------------------------------------------
-
-encryption_name = security.get(
-    "encryption",
-    "Unavailable",
-)
-
-encryption_enabled = bool(
-    security.get(
-        "encryption_enabled",
-        False,
-    )
-)
-
-secure_aggregation = bool(
-    security.get(
-        "secure_aggregation",
-        False,
-    )
-)
-
-encrypted_updates = security.get(
-    "encrypted_updates",
-    0,
-)
-
-plaintext_updates_exposed = bool(
-    security.get(
-        "plaintext_updates_exposed",
-        False,
-    )
-)
-
-
-try:
-
-    encrypted_updates_display = int(
-        encrypted_updates
-    )
-
-except (
-    TypeError,
-    ValueError,
-):
-
-    encrypted_updates_display = 0
-
-
-# -------------------------------------------------------------------
-# Header
-# -------------------------------------------------------------------
-
-st.title(
-    "FedMed Federated Hospital Dashboard"
-)
+st.title("🏥 FedMed — Federated Hospital Dashboard")
 
 st.caption(
-    "Cross-Silo Federated Learning - "
-    "Federated Hospital Network"
+    "Cross-Silo Federated Learning Engine | "
+    "Research prototype for privacy-aware medical image model training"
 )
 
-
-refresh_col, status_col = st.columns(
-    [1, 5]
-)
+refresh_col, info_col = st.columns([1, 4])
 
 with refresh_col:
-
-    if st.button(
-        "Refresh Training Data",
-        width="stretch",
-    ):
-
+    if st.button("Refresh dashboard", width="stretch"):
         st.rerun()
 
-
-with status_col:
-
-    if training_data is None:
-
-        st.error(
-            "Backend API unavailable. "
-            "Start the FastAPI server on port 8000."
-        )
-
-    else:
-
-        st.info(
-            f"Backend training status: "
-            f"{training_status.upper()}"
-        )
+with info_col:
+    st.caption(
+        "Refresh after hospitals connect or a federated round finishes."
+    )
 
 
-# -------------------------------------------------------------------
-# Hospital Nodes
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# Backend connection
+# ---------------------------------------------------------
 
-st.subheader(
-    "Federated Hospital Nodes"
+health_data, health_error = fetch_json(HEALTH_URL)
+training_data, training_error = fetch_json(STATUS_URL)
+
+if health_data and health_data.get("status") == "healthy":
+    st.success("FastAPI backend: healthy")
+else:
+    st.error(
+        "Backend unavailable. Start FastAPI on port 8000. "
+        f"Details: {health_error or 'Unexpected health response.'}"
+    )
+
+if training_data is None:
+    st.error(
+        "Training state could not be loaded. "
+        f"Details: {training_error}"
+    )
+    st.stop()
+
+
+# ---------------------------------------------------------
+# Read current runtime state
+# ---------------------------------------------------------
+
+training_status = str(
+    training_data.get("status", "unknown")
+).lower()
+
+current_round = int(
+    safe_number(training_data.get("current_round", 0))
 )
 
-cols = st.columns(3)
-
-for col, hospital in zip(
-    cols,
-    hospitals,
-):
-
-    with col:
-
-        st.markdown(
-            f"### {hospital['name']}"
-        )
-
-        st.write(
-            f"Node ID: `{hospital['id']}`"
-        )
-
-        st.write(
-            f"Dataset: `{hospital['dataset']}`"
-        )
-
-        status = hospital["status"]
-
-        if status == "Trained":
-
-            st.success(
-                "TRAINED"
-            )
-
-        elif status == "Training":
-
-            st.info(
-                "TRAINING"
-            )
-
-        elif status == "Retrying":
-
-            st.warning(
-                "RETRYING"
-            )
-
-        elif status == "Timeout":
-
-            st.error(
-                "TIMEOUT"
-            )
-
-        elif status == "Failed":
-
-            st.error(
-                "FAILED"
-            )
-
-        elif status == "Connected":
-
-            st.success(
-                "CONNECTED"
-            )
-
-        else:
-
-            st.error(
-                "DISCONNECTED"
-            )
-
-        st.metric(
-            "Retries",
-            hospital["retry_count"],
-        )
-
-        st.divider()
-
-        if st.button(
-            "Start Training",
-            key=f"train_{hospital['id']}",
-            width="stretch",
-        ):
-
-            st.info(
-                f"{hospital['name']} "
-                "training requested."
-            )
-
-        if st.button(
-            "Reconnect",
-            key=f"reconnect_{hospital['id']}",
-            width="stretch",
-        ):
-
-            st.info(
-                f"{hospital['name']} "
-                "reconnect requested."
-            )
-
-        if st.button(
-            "Disconnect",
-            key=f"disconnect_{hospital['id']}",
-            width="stretch",
-        ):
-
-            st.warning(
-                f"{hospital['name']} "
-                "disconnect requested."
-            )
-
-
-# -------------------------------------------------------------------
-# Network Summary
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Network Summary"
+total_rounds = int(
+    safe_number(training_data.get("total_rounds", 3))
 )
 
-problem_statuses = {
-    "Timeout",
-    "Failed",
-    "Disconnected",
+hospital_states = training_data.get("hospitals", {}) or {}
+retry_states = training_data.get("retries", {}) or {}
+rounds = training_data.get("rounds", []) or []
+hospital_metrics = (
+    training_data.get("hospital_metrics", {}) or {}
+)
+failures = training_data.get("failures", []) or []
+security = training_data.get("security", {}) or {}
+
+if not isinstance(rounds, list):
+    rounds = []
+
+if not isinstance(failures, list):
+    failures = []
+
+# Include configured hospitals even when they have not connected yet.
+hospital_ids = list(
+    dict.fromkeys(
+        EXPECTED_HOSPITALS + list(hospital_states.keys())
+    )
+)
+
+active_statuses = {
+    "connected",
+    "online",
+    "ready",
+    "training",
+    "running",
+    "trained",
+    "completed",
 }
 
 active_count = sum(
-    hospital["status"]
-    not in problem_statuses
-    for hospital in hospitals
-)
-
-problem_count = sum(
-    hospital["status"]
-    in problem_statuses
-    for hospital in hospitals
-)
-
-c1, c2, c3 = st.columns(3)
-
-with c1:
-
-    st.metric(
-        "Total Hospitals",
-        len(hospitals),
-    )
-
-with c2:
-
-    st.metric(
-        "Active / Participating Nodes",
-        active_count,
-    )
-
-with c3:
-
-    st.metric(
-        "Problem Nodes",
-        problem_count,
-    )
-
-
-# -------------------------------------------------------------------
-# Training Configuration
-# -------------------------------------------------------------------
-
-st.markdown("---")
-
-st.subheader(
-    "Training Configuration"
-)
-
-config_col1, config_col2, config_col3 = (
-    st.columns(3)
-)
-
-with config_col1:
-
-    config_epochs = st.number_input(
-        "Epochs",
-        min_value=1,
-        max_value=100,
-        value=2,
-        step=1,
-        key="config_epochs",
-    )
-
-with config_col2:
-
-    config_batch_size = st.number_input(
-        "Batch Size",
-        min_value=1,
-        max_value=16,
-        value=1,
-        step=1,
-        key="config_batch_size",
-    )
-
-with config_col3:
-
-    config_learning_rate = st.number_input(
-        "Learning Rate",
-        min_value=0.000001,
-        max_value=1.0,
-        value=0.001,
-        step=0.0001,
-        format="%.6f",
-        key="config_learning_rate",
-    )
-
-
-selected_hospitals = st.multiselect(
-    "Select Hospital Nodes",
-    options=[
-        "hospital-1",
-        "hospital-2",
-        "hospital-3",
-    ],
-    default=[
-        "hospital-1",
-        "hospital-2",
-        "hospital-3",
-    ],
-    key="selected_hospitals",
+    str(hospital_states.get(hospital_id, "disconnected")).lower()
+    in active_statuses
+    for hospital_id in hospital_ids
 )
 
 
-button_col1, button_col2 = st.columns(2)
-
-with button_col1:
-
-    if st.button(
-        "Initialize Training",
-        width="stretch",
-    ):
-
-        st.session_state[
-            "training_config"
-        ] = {
-            "epochs": config_epochs,
-            "batch_size": config_batch_size,
-            "learning_rate": config_learning_rate,
-            "selected_hospitals": selected_hospitals,
-        }
-
-        st.success(
-            "Configuration saved for the next training run."
-        )
-
-
-with button_col2:
-
-    if st.button(
-        "Reset Configuration",
-        width="stretch",
-    ):
-
-        st.session_state[
-            "training_config"
-        ] = {
-            "epochs": 2,
-            "batch_size": 1,
-            "learning_rate": 0.001,
-            "selected_hospitals": [
-                "hospital-1",
-                "hospital-2",
-                "hospital-3",
-            ],
-        }
-
-        st.success(
-            "Training configuration reset."
-        )
-
-        st.rerun()
-
-
-st.caption(
-    "Current federated backend defaults: "
-    "1 epoch, batch size 1, learning rate 0.001. "
-    "This panel prepares the configuration for "
-    "the next training run."
-)
-
-
-# -------------------------------------------------------------------
-# Federated Training Overview
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# Main summary
+# ---------------------------------------------------------
 
 st.divider()
+st.header("Federated Training Overview")
 
-st.subheader(
-    "Federated Training"
-)
+metric1, metric2, metric3, metric4 = st.columns(4)
 
-c1, c2, c3, c4 = st.columns(4)
+with metric1:
+    st.metric("Training Status", training_status.upper())
 
-with c1:
-
+with metric2:
     st.metric(
         "Current Round",
         f"{current_round}/{total_rounds}",
     )
 
-with c2:
+with metric3:
+    st.metric("Hospitals", len(hospital_ids))
 
-    st.metric(
-        "Completed Rounds",
-        completed_rounds,
-    )
+with metric4:
+    st.metric("Active / Trained Nodes", active_count)
 
-with c3:
-
-    st.metric(
-        "Global Loss",
-        f"{global_loss:.4f}"
-        if global_loss is not None
-        else "N/A",
-    )
-
-with c4:
-
-    st.metric(
-        "Aggregation",
-        "FedAvg",
-    )
+if total_rounds > 0:
+    progress = min(max(current_round / total_rounds, 0.0), 1.0)
+    st.progress(progress, text="Federated round progress")
 
 
-# -------------------------------------------------------------------
-# Training Progress
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# Hospital status
+# ---------------------------------------------------------
 
-st.markdown(
-    "### Training Progress"
-)
+st.divider()
+st.header("Hospital Nodes")
 
-try:
+hospital_rows = []
 
-    total_for_progress = max(
-        int(total_rounds),
-        1,
-    )
-
-    progress_value = min(
-        max(
-            current_round
-            / total_for_progress,
-            0.0,
+for hospital_id in hospital_ids:
+    hospital_rows.append({
+        "Hospital ID": hospital_id,
+        "Connection / Training Status": str(
+            hospital_states.get(hospital_id, "disconnected")
         ),
-        1.0,
-    )
-
-    st.progress(
-        progress_value
-    )
-
-except (
-    TypeError,
-    ValueError,
-    ZeroDivisionError,
-):
-
-    pass
-
-
-if training_status in {
-    "completed",
-    "complete",
-    "success",
-}:
-
-    st.success(
-        f"Federated training completed: "
-        f"{current_round}/{total_rounds} rounds."
-    )
-
-elif training_status in {
-    "running",
-    "training",
-}:
-
-    st.info(
-        f"Federated training is running "
-        f"(Round {current_round}/{total_rounds})."
-    )
-
-elif training_status == "error":
-
-    st.error(
-        "Federated training encountered an error."
-    )
-
-else:
-
-    st.info(
-        "Federated training is ready."
-    )
-
-
-# -------------------------------------------------------------------
-# Latest Federated Run
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Latest Federated Run"
-)
-
-summary_col1, summary_col2, summary_col3, summary_col4 = (
-    st.columns(4)
-)
-
-with summary_col1:
-
-    st.metric(
-        "Hospitals",
-        len(hospitals),
-    )
-
-with summary_col2:
-
-    st.metric(
-        "Rounds",
-        f"{current_round}/{total_rounds}",
-    )
-
-with summary_col3:
-
-    st.metric(
-        "Encrypted Updates",
-        encrypted_updates_display,
-    )
-
-with summary_col4:
-
-    st.metric(
-        "Status",
-        training_status.title(),
-    )
-
-
-# -------------------------------------------------------------------
-# ML Training Pipeline
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "ML Training Pipeline"
-)
-
-ml_col1, ml_col2, ml_col3, ml_col4 = (
-    st.columns(4)
-)
-
-with ml_col1:
-
-    st.metric(
-        "Model",
-        "MONAI 3D U-Net",
-    )
-
-with ml_col2:
-
-    st.metric(
-        "Framework",
-        "PyTorch",
-    )
-
-with ml_col3:
-
-    st.metric(
-        "Training",
-        "Federated Local",
-    )
-
-with ml_col4:
-
-    st.metric(
-        "Dataset",
-        "Synthetic MRI",
-    )
-
-
-st.info(
-    "Each hospital trains the 3D U-Net locally. "
-    "The protected local model update is then "
-    "encrypted and securely aggregated."
-)
-
-
-# -------------------------------------------------------------------
-# Security & Privacy
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Security & Privacy"
-)
-
-security_col1, security_col2, security_col3 = (
-    st.columns(3)
-)
-
-with security_col1:
-
-    st.metric(
-        "Encryption",
-        encryption_name,
-    )
-
-with security_col2:
-
-    st.metric(
-        "Encrypted Updates",
-        encrypted_updates_display,
-    )
-
-with security_col3:
-
-    st.metric(
-        "Secure Aggregation",
-        "Enabled"
-        if secure_aggregation
-        else "Disabled",
-    )
-
-
-security_col4, security_col5 = (
-    st.columns(2)
-)
-
-with security_col4:
-
-    if encryption_enabled:
-
-        st.success(
-            "OK - Encryption Enabled"
-        )
-
-    else:
-
-        st.error(
-            "ERROR - Encryption Disabled"
-        )
-
-
-with security_col5:
-
-    if plaintext_updates_exposed:
-
-        st.error(
-            "ERROR - Plaintext Updates Exposed"
-        )
-
-    else:
-
-        st.success(
-            "OK - Plaintext Updates Not Exposed"
-        )
-
-
-st.caption(
-    "Hospital model updates are protected with "
-    "Differential Privacy before TenSEAL CKKS "
-    "encryption and secure aggregation."
-)
-
-
-# -------------------------------------------------------------------
-# Differential Privacy
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Differential Privacy"
-)
-
-dp_col1, dp_col2, dp_col3 = (
-    st.columns(3)
-)
-
-with dp_col1:
-
-    st.metric(
-        "DP Status",
-        "Enabled",
-    )
-
-with dp_col2:
-
-    st.metric(
-        "Clipping Norm",
-        "1.0",
-    )
-
-with dp_col3:
-
-    st.metric(
-        "Noise Multiplier",
-        "0.1",
-    )
-
-
-dp_col4, dp_col5 = st.columns(2)
-
-with dp_col4:
-
-    st.success(
-        "OK - DP applied before encryption"
-    )
-
-with dp_col5:
-
-    st.success(
-        "OK - Private update protected"
-    )
-
-
-st.caption(
-    "Local model updates are clipped and "
-    "perturbed before TenSEAL CKKS encryption."
-)
-
-
-if (
-    encryption_enabled
-    and secure_aggregation
-    and not plaintext_updates_exposed
-):
-
-    st.success(
-        "FedMed security pipeline active: "
-        "DP -> TenSEAL CKKS -> secure aggregation"
-    )
-
-else:
-
-    st.warning(
-        "Security pipeline is not fully active."
-    )
-
-
-# -------------------------------------------------------------------
-# Round History
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Round History"
-)
-
-if round_history:
-
-    table_rows = []
-
-    for item in round_history:
-
-        round_number = item.get(
-            "round",
-            "N/A",
-        )
-
-        round_status = item.get(
-            "status",
-            "Unknown",
-        )
-
-        loss = item.get(
-            "loss"
-        )
-
-        if loss is not None:
-
-            try:
-
-                loss_display = round(
-                    float(loss),
-                    4,
-                )
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-
-                loss_display = "N/A"
-
-        else:
-
-            loss_display = "N/A"
-
-        table_rows.append(
-            {
-                "Round": round_number,
-                "Status": str(
-                    round_status
-                ).title(),
-                "Loss": loss_display,
-            }
-        )
-
-    st.dataframe(
-        table_rows,
-        width="stretch",
-        hide_index=True,
-    )
-
-else:
-
-    st.info(
-        "No completed round history "
-        "is available yet."
-    )
-
-
-# -------------------------------------------------------------------
-# Loss Chart
-# -------------------------------------------------------------------
-
-st.markdown(
-    "### Global Loss by Round"
-)
-
-chart_rows = []
-
-for item in round_history:
-
-    round_number = item.get(
-        "round"
-    )
-
-    loss = item.get(
-        "loss"
-    )
-
-    try:
-
-        round_number = int(
-            round_number
-        )
-
-        loss = float(
-            loss
-        )
-
-        chart_rows.append(
-            {
-                "Round": round_number,
-                "Loss": loss,
-            }
-        )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
-        continue
-
-
-if chart_rows:
-
-    chart_df = (
-        pd.DataFrame(
-            chart_rows
-        )
-        .sort_values(
-            "Round"
-        )
-        .set_index(
-            "Round"
-        )
-    )
-
-    st.line_chart(
-        chart_df[
-            ["Loss"]
-        ],
-        width="stretch",
-    )
-
-else:
-
-    st.info(
-        "Loss chart will appear after "
-        "training rounds are recorded."
-    )
-
-
-# -------------------------------------------------------------------
-# Hospital Federated Status
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Hospital Federated Status"
-)
-
-local_rows = []
-
-for hospital in hospitals:
-
-    local_rows.append(
-        {
-            "Hospital": hospital["name"],
-            "Node ID": hospital["id"],
-            "Status": hospital["status"],
-            "Training Role": "Local model training",
-            "Retries": hospital["retry_count"],
-        }
-    )
-
+        "Retry Count": retry_states.get(hospital_id, 0),
+        "Metrics Recorded": len(
+            hospital_metrics.get(hospital_id, []) or []
+        ),
+        "Dataset Mode": "Synthetic demo data",
+    })
 
 st.dataframe(
-    local_rows,
-    width="stretch",
+    pd.DataFrame(hospital_rows),
+    use_container_width=True,
     hide_index=True,
 )
 
-
-# -------------------------------------------------------------------
-# Node Failure / Retry Events
-# -------------------------------------------------------------------
-
-st.divider()
-
-st.subheader(
-    "Node Failure & Retry Events"
+st.caption(
+    "A hospital may have no record for an individual round "
+    "if it was not selected to participate in that round."
 )
 
-if failures:
 
-    failure_rows = []
+# ---------------------------------------------------------
+# Global round history and loss
+# ---------------------------------------------------------
 
-    for failure in failures:
+st.divider()
+st.header("Federated Round History")
 
-        if not isinstance(
-            failure,
-            dict,
-        ):
-            continue
+if rounds:
+    rounds_df = pd.DataFrame(rounds)
 
-        failure_rows.append(
-            {
-                "Hospital": failure.get(
-                    "hospital_id",
-                    "Unknown",
-                ),
-                "Round": failure.get(
-                    "round",
-                    "N/A",
-                ),
-                "Status": str(
-                    failure.get(
-                        "status",
-                        "failure",
-                    )
-                ).upper(),
-                "Retry Count": failure.get(
-                    "retry_count",
-                    0,
-                ),
-            }
-        )
+    display_columns = [
+        column
+        for column in ["round", "status", "loss"]
+        if column in rounds_df.columns
+    ]
 
-    if failure_rows:
-
+    if display_columns:
         st.dataframe(
-            failure_rows,
-            width="stretch",
+            rounds_df[display_columns],
+            use_container_width=True,
             hide_index=True,
         )
 
-        for failure in failure_rows:
-
-            st.warning(
-                f"{failure['Hospital']} - "
-                f"{failure['Status']} in "
-                f"Round {failure['Round']} "
-                f"(Retries: "
-                f"{failure['Retry Count']})"
-            )
-
-    else:
-
-        st.success(
-            "No node failures recorded."
+    if {"round", "loss"}.issubset(rounds_df.columns):
+        chart_df = rounds_df[["round", "loss"]].copy()
+        chart_df["round"] = pd.to_numeric(
+            chart_df["round"], errors="coerce"
         )
+        chart_df["loss"] = pd.to_numeric(
+            chart_df["loss"], errors="coerce"
+        )
+        chart_df = chart_df.dropna().sort_values("round")
 
+        if not chart_df.empty:
+            st.subheader("Global Loss by Round")
+            st.line_chart(
+                chart_df.set_index("round")["loss"]
+            )
 else:
-
-    st.success(
-        "No node failures recorded."
+    st.info(
+        "No federated rounds have been recorded yet. "
+        "Start the Flower server and hospital clients to run training."
     )
 
 
-# -------------------------------------------------------------------
-# Footer
-# -------------------------------------------------------------------
+# ---------------------------------------------------------
+# Per-hospital training metrics
+# ---------------------------------------------------------
+
+st.divider()
+st.header("Per-Hospital Training Metrics")
+
+metric_rows = []
+
+if isinstance(hospital_metrics, dict):
+    for hospital_id, history in hospital_metrics.items():
+        if not isinstance(history, list):
+            continue
+
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+
+            metric_rows.append({
+                "Hospital ID": hospital_id,
+                "Round": item.get("round"),
+                "Update Status": item.get("status", "unknown"),
+                "Train Loss": item.get("train_loss"),
+                "Validation Loss": item.get("val_loss"),
+                "Dice Score": item.get("dice"),
+                "Retries": item.get("retry_count", 0),
+                "DP Max Norm": item.get("dp_max_norm"),
+                "DP Noise Multiplier": item.get(
+                    "dp_noise_multiplier"
+                ),
+            })
+
+if metric_rows:
+    metrics_df = pd.DataFrame(metric_rows)
+
+    sort_columns = [
+        column
+        for column in ["Hospital ID", "Round"]
+        if column in metrics_df.columns
+    ]
+
+    if sort_columns:
+        metrics_df = metrics_df.sort_values(sort_columns)
+
+    st.dataframe(
+        metrics_df,
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.info(
+        "No hospital-level training metrics are recorded yet. "
+        "They will appear after clients participate in training."
+    )
+
+st.caption(
+    "Dice scores and losses are measured outputs from the configured "
+    "training pipeline; they are not a guarantee of clinical performance."
+)
+
+
+# ---------------------------------------------------------
+# Failures and recovery information
+# ---------------------------------------------------------
+
+st.divider()
+st.header("Failures and Recovery")
+
+if failures:
+    st.dataframe(
+        pd.DataFrame(failures),
+        use_container_width=True,
+        hide_index=True,
+    )
+else:
+    st.success("No failures are recorded in the current runtime state.")
+
+
+# ---------------------------------------------------------
+# Security configuration reported by backend
+# ---------------------------------------------------------
+
+st.divider()
+st.header("Security Configuration")
+
+
+security_rows = [
+    {
+        "Setting": "Encryption method reported",
+        "Value": str(security.get("encryption", "Unknown")),
+    },
+    {
+        "Setting": "Encryption enabled flag",
+        "Value": str(security.get("encryption_enabled", "Unknown")),
+    },
+    {
+        "Setting": "Secure aggregation flag",
+        "Value": str(security.get("secure_aggregation", "Unknown")),
+    },
+    {
+        "Setting": "Encrypted updates recorded",
+        "Value": str(security.get("encrypted_updates", 0)),
+    },
+    {
+        "Setting": "Plaintext update exposure flag",
+        "Value": str(security.get("plaintext_updates_exposed", "Unknown")),
+    },
+]
+
+st.dataframe(
+    pd.DataFrame(security_rows),
+    use_container_width=True,
+    hide_index=True,
+)
+
+st.warning(
+    "These are backend-reported settings, not an independent security "
+    "audit. Verify key ownership, decryption access, transport protection "
+    "and privacy accounting before claiming server-blind secure aggregation "
+    "or a formal differential-privacy guarantee."
+)
+
+
+# ---------------------------------------------------------
+# Raw state for debugging and demonstration
+# ---------------------------------------------------------
+
+with st.expander("Show raw backend response"):
+    st.json(training_data)
 
 st.divider()
 
 st.caption(
-    "FedMed | Cross-Silo Federated Learning "
-    "Engine | Hospital Privacy Preserved"
+    "FedMed academic research prototype. The current demonstration uses "
+    "synthetic MRI segmentation data. It is not intended for clinical diagnosis."
 )
-# FedMed frontend build: 2026-09-27
-
-# FedMed frontend build: 2026-09-28
-
-# FedMed frontend build: 2026-09-29
-
-# FedMed frontend check: 2026-09-30
-
-# FedMed frontend check: 2026-10-01
-
-# FedMed frontend check: 2026-10-02
-
-# FedMed frontend check: 2026-10-03
-
-# FedMed frontend check: 2026-10-04
-
-# FedMed frontend check: 2026-10-05
-
-# FedMed frontend check: 2026-10-06
