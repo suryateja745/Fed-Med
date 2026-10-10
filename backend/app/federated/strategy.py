@@ -11,6 +11,7 @@ from flwr.common import (
 )
 
 from app.federated.metrics import (
+    record_hospital_metrics,
     record_round,
     record_security_updates,
     set_hospital_status,
@@ -32,6 +33,7 @@ KNOWN_HOSPITALS = {
 def fit_config(
     server_round: int,
 ) -> dict[str, Any]:
+    """Configuration sent to hospitals for local training."""
     return {
         "server_round": server_round,
         "epochs": 1,
@@ -45,15 +47,14 @@ def fit_config(
 def evaluate_config(
     server_round: int,
 ) -> dict[str, Any]:
+    """Configuration sent to hospitals for evaluation."""
     return {
         "server_round": server_round,
         "batch_size": 1,
     }
 
 
-class FedMedStrategy(
-    fl.server.strategy.FedAvg
-):
+class FedMedStrategy(fl.server.strategy.FedAvg):
     """FedMed federated strategy."""
 
     def __init__(self) -> None:
@@ -73,16 +74,16 @@ class FedMedStrategy(
         results,
         failures,
     ):
+        """Record hospital metrics and aggregate encrypted updates."""
+
         print(
             f"[Round {server_round}] "
-            f"Received {len(results)} "
-            "successful fit result(s)"
+            f"Received {len(results)} successful fit result(s)"
         )
 
         print(
             f"[Round {server_round}] "
-            f"Received {len(failures)} "
-            "failure(s)"
+            f"Received {len(failures)} failure(s)"
         )
 
         set_training_status(
@@ -92,14 +93,24 @@ class FedMedStrategy(
 
         successful_hospitals: set[str] = set()
 
+        # ---------------------------------------------------------
+        # Record the actual metrics returned by each successful
+        # hospital. Do not manufacture missing metric values.
+        # ---------------------------------------------------------
         for _, fit_res in results:
-            hospital_id = fit_res.metrics.get(
+            fit_metrics = dict(fit_res.metrics or {})
+
+            hospital_id = fit_metrics.get(
                 "hospital_id"
             )
 
             if hospital_id:
-                hospital_id = str(
-                    hospital_id
+                hospital_id = str(hospital_id)
+
+                record_hospital_metrics(
+                    hospital_id=hospital_id,
+                    round_number=server_round,
+                    metrics=fit_metrics,
                 )
 
                 successful_hospitals.add(
@@ -114,9 +125,12 @@ class FedMedStrategy(
 
                 print(
                     f"[Round {server_round}] "
-                    f"{hospital_id} -> trained"
+                    f"{hospital_id} -> metrics recorded"
                 )
 
+        # ---------------------------------------------------------
+        # Identify clients that failed during the round.
+        # ---------------------------------------------------------
         failed_hospitals: set[str] = set()
 
         for failure in failures:
@@ -147,6 +161,8 @@ class FedMedStrategy(
                     f"Client failure: {failure}"
                 )
 
+        # Identify expected hospitals that did not report a
+        # successful fit result when the full client set responded.
         if (
             len(results) + len(failures)
             >= len(KNOWN_HOSPITALS)
@@ -171,10 +187,10 @@ class FedMedStrategy(
 
             print(
                 f"[Round {server_round}] "
-                f"{hospital_id} -> "
-                "timeout/failure"
+                f"{hospital_id} -> timeout/failure"
             )
 
+        # There is nothing to aggregate when no client succeeded.
         if not results:
             print(
                 f"[Round {server_round}] "
@@ -184,8 +200,8 @@ class FedMedStrategy(
             return None
 
         # ---------------------------------------------------------
-        # Extract encrypted chunks from each client.
-        # Keep chunk positions aligned across hospitals.
+        # Convert the encrypted payloads back to byte chunks.
+        # Chunk order must remain identical across hospitals.
         # ---------------------------------------------------------
         client_encrypted_updates: list[
             list[bytes]
@@ -216,21 +232,17 @@ class FedMedStrategy(
 
         print(
             f"[Round {server_round}] "
-            f"Received "
-            f"{len(results)} encrypted "
-            f"client update(s)"
+            f"Received {len(results)} encrypted client update(s)"
         )
 
         print(
             f"[Round {server_round}] "
-            f"Encrypted chunks per client: "
-            f"{chunk_count}"
+            f"Encrypted chunks per client: {chunk_count}"
         )
 
         print(
             f"[Round {server_round}] "
-            "Performing TenSEAL CKKS "
-            "secure aggregation"
+            "Performing TenSEAL CKKS aggregation"
         )
 
         try:
@@ -243,8 +255,7 @@ class FedMedStrategy(
         except Exception as exc:
             print(
                 f"[Round {server_round}] "
-                f"Encrypted aggregation failed: "
-                f"{exc}"
+                f"Encrypted aggregation failed: {exc}"
             )
 
             set_training_status(
@@ -269,16 +280,13 @@ class FedMedStrategy(
             )
         )
 
-        # Preserve existing dashboard semantics:
-        # one encrypted update per successful hospital.
+        # Preserve existing dashboard update-count semantics.
         record_security_updates(
             len(results)
         )
 
         aggregation_metrics = {
-            "encrypted_updates": len(
-                results
-            ),
+            "encrypted_updates": len(results),
             "encrypted_chunks": chunk_count,
             "secure_aggregation": True,
             "encryption": "TenSEAL-CKKS",
@@ -288,14 +296,12 @@ class FedMedStrategy(
 
         print(
             f"[Round {server_round}] "
-            "TenSEAL secure aggregation "
-            "completed"
+            "TenSEAL aggregation completed"
         )
 
         print(
             f"[Round {server_round}] "
-            f"FedAvg mean computed from "
-            f"{len(results)} client(s)"
+            f"FedAvg mean computed from {len(results)} client(s)"
         )
 
         return (
@@ -309,16 +315,16 @@ class FedMedStrategy(
         results,
         failures,
     ):
+        """Aggregate evaluation and save the global round result."""
+
         print(
             f"[Round {server_round}] "
-            f"Received {len(results)} "
-            "evaluation result(s)"
+            f"Received {len(results)} evaluation result(s)"
         )
 
         print(
             f"[Round {server_round}] "
-            f"Received {len(failures)} "
-            "evaluation failure(s)"
+            f"Received {len(failures)} evaluation failure(s)"
         )
 
         aggregated = (
@@ -359,8 +365,7 @@ class FedMedStrategy(
 
         print(
             f"[Round {server_round}] "
-            f"Evaluation loss: "
-            f"{float(loss):.4f}"
+            f"Evaluation loss: {float(loss):.4f}"
         )
 
         return aggregated
@@ -369,6 +374,8 @@ class FedMedStrategy(
     def _extract_hospital_id(
         client_proxy: Any,
     ) -> str | None:
+        """Extract a known hospital ID from the client proxy."""
+
         for attribute in (
             "cid",
             "node_id",
